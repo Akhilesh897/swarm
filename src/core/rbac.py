@@ -1,0 +1,23 @@
+ROLE_EMPLOYEE = "employee"
+ROLE_MANAGER = "manager"
+ROLE_HR = "hr"
+ROLE_IT = "it"
+ROLE_FINANCE = "finance"
+ROLE_ADMIN = "admin"
+
+INTENT_HR = "hr"
+INTENT_IT = "it"
+INTENT_FINANCE = "finance"
+INTENT_GENERAL = "general"
+
+ROLE_PERMISSIONS = {
+    INTENT_HR: {ROLE_EMPLOYEE, ROLE_MANAGER, ROLE_HR, ROLE_ADMIN},
+    INTENT_IT: {ROLE_EMPLOYEE, ROLE_MANAGER, ROLE_IT, ROLE_ADMIN},
+    INTENT_FINANCE: {ROLE_EMPLOYEE, ROLE_MANAGER, ROLE_FINANCE, ROLE_ADMIN},
+    INTENT_GENERAL: {ROLE_EMPLOYEE, ROLE_MANAGER, ROLE_HR, ROLE_IT, ROLE_FINANCE, ROLE_ADMIN},
+}
+
+
+def check_access(role: str, intent: str) -> bool:
+    allowed = ROLE_PERMISSIONS.get(intent, set())
+    return role in allowed
