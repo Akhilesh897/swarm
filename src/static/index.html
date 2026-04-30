@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>General Chat Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="bg-gradient"></div>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+    <div class="bg-grid"></div>
+
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Enterprise Copilot</p>
+          <h1>General Chat Console</h1>
+          <p class="subtitle">
+            Route questions to the right agent and keep context tight across sessions.
+          </p>
+        </div>
+        <div class="status-card">
+          <div class="status-dot"></div>
+          <div>
+            <p class="status-title">API Status</p>
+            <p class="status-value" id="apiStatus">Checking...</p>
+          </div>
+        </div>
+      </header>
+
+      <section class="panel">
+        <form class="control-grid" id="chatForm">
+          <label>
+            User ID
+            <input id="userId" name="userId" type="text" autocomplete="off" />
+          </label>
+          <label>
+            Session ID
+            <input id="sessionId" name="sessionId" type="text" autocomplete="off" />
+          </label>
+          <label>
+            Role
+            <select id="role" name="role">
+              <option value="employee" selected>employee</option>
+              <option value="manager">manager</option>
+              <option value="hr">hr</option>
+              <option value="finance">finance</option>
+              <option value="it">it</option>
+            </select>
+          </label>
+        </form>
+      </section>
+
+      <section class="panel chat-panel">
+        <div class="chat-header">
+          <div>
+            <h2>Live Chat</h2>
+            <p class="muted">Talk to any agent, approvals flagged in real time.</p>
+          </div>
+          <button class="ghost" id="clearChat" type="button">Clear</button>
+        </div>
+
+        <div class="chat-log" id="chatLog"></div>
+
+        <div class="composer">
+          <textarea
+            id="message"
+            rows="2"
+            placeholder="Ask about reimbursements, policies, or approvals..."
+          ></textarea>
+          <div class="composer-actions">
+            <div class="hint">Shift+Enter for newline</div>
+            <button class="send" id="sendBtn" type="button">Send</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

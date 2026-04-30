@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.config import get_config
@@ -27,9 +31,20 @@ def create_app() -> FastAPI:
     app = FastAPI(title=get_config().app_name)
     app.include_router(tools_router)
 
+    static_dir = Path(__file__).resolve().parent / "static"
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/")
+    def ui_root() -> FileResponse:
+        return FileResponse(static_dir / "index.html")
+
+    @app.get("/ui")
+    def ui_page() -> FileResponse:
+        return FileResponse(static_dir / "index.html")
 
     @app.post("/chat", response_model=ChatResponse)
     def chat(req: ChatRequest) -> ChatResponse:
