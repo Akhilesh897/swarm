@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SQL Data Dashboard</title>
+  <style>
+    :root { --ink:#1f2933; --muted:#6b7280; --line:#d9dee7; --panel:#ffffff; --bg:#f6f8fb; --accent:#2563eb; --ok:#059669; --warn:#b45309; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Segoe UI, Arial, sans-serif; color:var(--ink); background:var(--bg); }
+    header { padding:24px 32px; background:#111827; color:#fff; }
+    h1 { margin:0 0 6px; font-size:28px; font-weight:650; }
+    header p { margin:0; color:#cbd5e1; }
+    main { padding:24px 32px 40px; }
+    .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:14px; margin-bottom:20px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; }
+    .card span { display:block; color:var(--muted); font-size:13px; }
+    .card b { display:block; font-size:30px; margin-top:6px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; margin-bottom:20px; }
+    section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:16px; }
+    h2 { font-size:18px; margin:0 0 12px; }
+    .bar-row, .stock { display:grid; grid-template-columns:110px 1fr 32px; gap:10px; align-items:center; margin:10px 0; font-size:14px; }
+    .bar, .meter { height:10px; border-radius:999px; background:#e5e7eb; overflow:hidden; }
+    .bar i, .meter i { display:block; height:100%; background:var(--accent); }
+    .meter i { background:var(--ok); }
+    .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:8px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; background:#fff; }
+    th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    th { background:#f3f4f6; font-weight:650; color:#374151; }
+    tr:last-child td { border-bottom:0; }
+    .empty { color:var(--muted); margin:0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SQL Data Dashboard</h1>
+    <p>Source: data/app.db</p>
+  </header>
+  <main>
+    <div class="cards">
+      <div class="card"><span>Tickets</span><b>5</b></div>
+      <div class="card"><span>Assets</span><b>6</b></div>
+      <div class="card"><span>Approvals Shown</span><b>20</b></div>
+      <div class="card"><span>Inventory Types</span><b>6</b></div>
+    </div>
+    <div class="grid">
+      <section><h2>Ticket Status</h2><div class="bar-row"><span>open</span><div class="bar"><i style="width:100%"></i></div><b>4</b></div><div class="bar-row"><span>resolved</span><div class="bar"><i style="width:25%"></i></div><b>1</b></div></section>
+      <section><h2>Ticket Priority</h2><div class="bar-row"><span>medium</span><div class="bar"><i style="width:100%"></i></div><b>5</b></div></section>
+      <section><h2>Asset Status</h2><div class="bar-row"><span>pending_manager_approval</span><div class="bar"><i style="width:100%"></i></div><b>6</b></div></section>
+      <section><h2>Inventory Stock</h2><div class="stock"><span>keyboard</span><div class="meter"><i style="width:100%"></i></div><b>12</b></div><div class="stock"><span>laptop</span><div class="meter"><i style="width:41%"></i></div><b>5</b></div><div class="stock"><span>monitor</span><div class="meter"><i style="width:66%"></i></div><b>8</b></div><div class="stock"><span>mouse</span><div class="meter"><i style="width:100%"></i></div><b>12</b></div><div class="stock"><span>software license</span><div class="meter"><i style="width:83%"></i></div><b>10</b></div><div class="stock"><span>vpn token</span><div class="meter"><i style="width:33%"></i></div><b>4</b></div></section>
+    </div>
+    <section><h2>Tickets</h2><div class="table-wrap"><table><thead><tr><th>id</th><th>user_id</th><th>issue_type</th><th>priority</th><th>status</th><th>assigned_engineer</th><th>detail</th></tr></thead><tbody><tr><td>5</td><td>user-a337a440</td><td>vpn</td><td>medium</td><td>open</td><td></td><td>Create ticket for VPN issue</td></tr><tr><td>4</td><td>user-a337a440</td><td>general</td><td>medium</td><td>open</td><td></td><td>Please provide the ticket id to resolve.</td></tr><tr><td>3</td><td>emp-ui</td><td>email</td><td>medium</td><td>resolved</td><td>user-a337a440</td><td>I have an Outlook email issue create ticket</td></tr><tr><td>2</td><td>emp-it-test</td><td>printer</td><td>medium</td><td>open</td><td></td><td>printer issue create ticket</td></tr><tr><td>1</td><td>emp-it-test</td><td>vpn</td><td>medium</td><td>open</td><td></td><td>I have a VPN problem, please create ticket</td></tr></tbody></table></div></section>
+    <section><h2>Assets</h2><div class="table-wrap"><table><thead><tr><th>id</th><th>user_id</th><th>asset_type</th><th>status</th><th>approval_stage</th><th>fulfilled_by</th></tr></thead><tbody><tr><td>6</td><td>user-a337a440</td><td>laptop</td><td>pending_manager_approval</td><td>manager_approval</td><td></td></tr><tr><td>5</td><td>user-a337a440</td><td>software license</td><td>pending_manager_approval</td><td>manager_approval</td><td></td></tr><tr><td>4</td><td>user-a337a440</td><td>laptop</td><td>pending_manager_approval</td><td>manager_approval</td><td></td></tr><tr><td>3</td><td>user-a337a440</td><td>laptop</td><td>pending_manager_approval</td><td>manager_approval</td><td></td></tr><tr><td>2</td><td>user-a337a440</td><td>laptop</td><td>pending_manager_approval</td><td>manager_approval</td><td></td></tr><tr><td>1</td><td>emp-it-test</td><td>laptop</td><td>pending_manager_approval</td><td>manager_approval</td><td></td></tr></tbody></table></div></section>
+    <section><h2>Approvals Latest 25</h2><div class="table-wrap"><table><thead><tr><th>id</th><th>request_type</th><th>request_id</th><th>status</th><th>approver_id</th><th>created_at</th></tr></thead><tbody><tr><td>20</td><td>asset</td><td>6</td><td>pending</td><td></td><td>2026-05-02T11:24:03.879312</td></tr><tr><td>19</td><td>asset</td><td>5</td><td>pending</td><td></td><td>2026-05-02T11:21:30.667560</td></tr><tr><td>18</td><td>asset</td><td>4</td><td>pending</td><td></td><td>2026-05-02T11:21:12.700832</td></tr><tr><td>17</td><td>asset</td><td>3</td><td>pending</td><td></td><td>2026-05-02T11:20:36.561346</td></tr><tr><td>16</td><td>asset</td><td>2</td><td>pending</td><td></td><td>2026-05-02T11:20:02.700933</td></tr><tr><td>15</td><td>asset</td><td>1</td><td>pending</td><td></td><td>2026-05-02T11:11:07.322964</td></tr><tr><td>14</td><td>leave</td><td>19</td><td>approved</td><td>Akhilesh.Suvarna@novigosolutions.com</td><td>2026-05-02T08:39:34.813911</td></tr><tr><td>13</td><td>leave</td><td>18</td><td>approved</td><td>Akhilesh.Suvarna@novigosolutions.com</td><td>2026-05-02T08:31:54.347251</td></tr><tr><td>12</td><td>leave</td><td>17</td><td>approved</td><td>Akhilesh.Suvarna@novigosolutions.com</td><td>2026-05-02T08:14:34.699159</td></tr><tr><td>11</td><td>leave</td><td>16</td><td>pending</td><td></td><td>2026-05-02T08:08:19.778027</td></tr><tr><td>10</td><td>leave</td><td>15</td><td>pending</td><td></td><td>2026-05-02T08:00:15.170465</td></tr><tr><td>9</td><td>leave</td><td>12</td><td>pending</td><td></td><td>2026-05-02T06:37:28.437867</td></tr><tr><td>8</td><td>leave</td><td>10</td><td>pending</td><td></td><td>2026-05-02T06:19:39.824647</td></tr><tr><td>7</td><td>leave</td><td>8</td><td>pending</td><td></td><td>2026-05-01T15:01:23.132806</td></tr><tr><td>6</td><td>leave</td><td>7</td><td>pending</td><td></td><td>2026-05-01T14:51:02.613524</td></tr><tr><td>5</td><td>leave</td><td>6</td><td>approved</td><td>Akhilesh.Suvarna@novigosolutions.com</td><td>2026-05-01T14:41:02.646617</td></tr><tr><td>4</td><td>leave</td><td>5</td><td>pending</td><td></td><td>2026-05-01T14:34:16.151030</td></tr><tr><td>3</td><td>leave</td><td>4</td><td>pending</td><td></td><td>2026-05-01T14:21:01.410832</td></tr><tr><td>2</td><td>leave</td><td>3</td><td>pending</td><td></td><td>2026-05-01T12:30:16.715402</td></tr><tr><td>1</td><td>leave</td><td>1</td><td>pending</td><td></td><td>2026-05-01T12:29:21.436466</td></tr></tbody></table></div></section>
+    <section><h2>Inventory</h2><div class="table-wrap"><table><thead><tr><th>asset_type</th><th>quantity</th><th>updated_at</th></tr></thead><tbody><tr><td>keyboard</td><td>12</td><td>2026-05-02T11:11:00.127440</td></tr><tr><td>laptop</td><td>5</td><td>2026-05-02T11:11:00.127440</td></tr><tr><td>monitor</td><td>8</td><td>2026-05-02T11:11:00.127440</td></tr><tr><td>mouse</td><td>12</td><td>2026-05-02T11:11:00.127440</td></tr><tr><td>software license</td><td>10</td><td>2026-05-02T11:11:00.127440</td></tr><tr><td>vpn token</td><td>4</td><td>2026-05-02T11:11:00.127440</td></tr></tbody></table></div></section>
+    <section><h2>Known Outages</h2><div class="table-wrap"><table><thead><tr><th>id</th><th>issue_type</th><th>title</th><th>status</th><th>started_at</th><th>updated_at</th></tr></thead><tbody><tr><td>1</td><td>email</td><td>Outlook delayed delivery advisory</td><td>resolved</td><td>2026-05-02T11:11:00.127440</td><td>2026-05-02T11:11:00.127440</td></tr></tbody></table></div></section>
+    <section><h2>Maintenance Windows</h2><div class="table-wrap"><table><thead><tr><th>id</th><th>issue_type</th><th>title</th><th>starts_at</th><th>ends_at</th><th>status</th></tr></thead><tbody><tr><td>1</td><td>vpn</td><td>VPN gateway maintenance</td><td>2026-01-01T00:00:00</td><td>2026-01-01T02:00:00</td><td>completed</td></tr></tbody></table></div></section>
+  </main>
+</body>
+</html>
