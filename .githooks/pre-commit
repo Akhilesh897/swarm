@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+max_size=$((5 * 1024 * 1024))
+failed=0
+
+staged_files=$(git diff --cached --name-only --diff-filter=ACMR)
+
+for file in $staged_files; do
+  case "$file" in
+    .env|*/.env)
+      echo "Blocked commit: .env files must not be committed ($file)."
+      failed=1
+      ;;
+    *.db)
+      echo "Blocked commit: database files must not be committed ($file)."
+      failed=1
+      ;;
+  esac
+
+  if [ -f "$file" ]; then
+    size=$(wc -c < "$file" | tr -d ' ')
+    if [ "$size" -gt "$max_size" ]; then
+      echo "Blocked commit: $file is larger than 5MB."
+      failed=1
+    fi
+  fi
+done
+
+if [ "$failed" -ne 0 ]; then
+  echo "Commit aborted by pre-commit checks."
+  exit 1
+fi
+
+exit 0

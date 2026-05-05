@@ -29,6 +29,38 @@ This project implements an enterprise multi-agent AI copilot aligned to the prov
 - `src/tools` tool layer (SQL, email, RAG, FastMCP stubs)
 - `docs` specs and API guide
 - `data` local storage (SQLite, vector DB)
+- `scripts` local maintenance scripts
+
+This repository uses a compact `src/` backend layout. The clean structure maps as:
+- backend: `src/app.py`, `src/core`, `src/tools`
+- agents: `src/agents`
+- rag: `src/tools/ingest.py`, `src/tools/vector_store.py`
+- workflows: `src/graph`
+- scripts: `scripts`
+
+## Git and CI workflow
+Enable the local pre-commit hook once per clone:
+```powershell
+.\scripts\install-git-hooks.ps1
+```
+
+The hook blocks staged `.env` files, `.db` files, and files larger than 5MB.
+
+Before pushing:
+```bash
+git status
+git add .
+git commit -m "chore: add git hygiene and ci workflow"
+git push origin main
+```
+
+Use meaningful commit messages, for example:
+- `feat: add finance agent`
+- `fix: correct approval flow bug`
+- `refactor: improve rag pipeline`
+- `chore: update config`
+
+Avoid vague messages such as `latest`, `final`, or `update`.
 
 ## Notes
 - The tool layer is written as a FastAPI router to emulate MCP calls. Replace with a real FastMCP server if needed.

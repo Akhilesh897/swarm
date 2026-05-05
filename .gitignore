@@ -1,2 +1,28 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environments
 .venv/
+.venv*/
+env/
+
+# Environment files
 .env
+
+# Databases
+*.db
+
+# Logs
+logs/
+*.log
+
+# Vector DB / embeddings
+vector_db/
+data/vector_db/
+
+# OS files
+.DS_Store
+
+# Optional local documents
+*.pdf
