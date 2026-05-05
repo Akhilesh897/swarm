@@ -5,8 +5,10 @@ from src.tools import sql
 
 
 class MemoryManager:
+    _shared_short_term: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
     def __init__(self) -> None:
-        self._short_term: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        self._short_term = self._shared_short_term
 
     def add_message(self, session_id: str, message: dict[str, Any]) -> None:
         self._short_term[session_id].append(message)

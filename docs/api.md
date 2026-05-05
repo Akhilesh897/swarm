@@ -26,7 +26,11 @@ Returns `ok` when service is up.
 ## POST /tools/*
 Tool endpoints emulate MCP calls:
 - /tools/apply_leave
+- /tools/list_leave_history
+- /tools/list_pending_leaves
+- /tools/cancel_leave
 - /tools/create_ticket
 - /tools/get_leave_balance
 - /tools/approve_request
+- /tools/get_approval_status
 - /tools/send_email

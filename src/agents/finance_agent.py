@@ -9,10 +9,11 @@ class FinanceAgent(BaseAgent):
 
     def handle(self, state: dict) -> AgentResult:
         query = state.get("query", "").lower()
-        if "payslip" in query:
+        intent_type = state.get("intent_type", "other")
+        if intent_type in {"status", "other"} and "payslip" in query:
             return AgentResult(response="Payslip request recorded. Please specify month if needed.")
 
-        if "reimbursement" in query or "claim" in query:
+        if intent_type == "action" and ("reimbursement" in query or "claim" in query):
             amount = _extract_amount(query)
             reimb_id = sql.submit_reimbursement(state["user_id"], amount, "general")
             approval_required = amount > 5000

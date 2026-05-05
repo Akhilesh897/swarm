@@ -14,17 +14,15 @@
   </head>
   <body>
     <div class="bg-gradient"></div>
-    <div class="bg-orb orb-a"></div>
-    <div class="bg-orb orb-b"></div>
     <div class="bg-grid"></div>
 
     <main class="shell">
       <header class="hero">
         <div>
           <p class="eyebrow">Enterprise Copilot</p>
-          <h1>General Chat Console</h1>
+          <h1>SWARM</h1>
           <p class="subtitle">
-            Route questions to the right agent and keep context tight across sessions.
+            Your all in one assistant for HR, IT, Finance.
           </p>
         </div>
         <div class="status-card">
@@ -36,52 +34,65 @@
         </div>
       </header>
 
-      <section class="panel">
-        <form class="control-grid" id="chatForm">
-          <label>
-            User ID
-            <input id="userId" name="userId" type="text" autocomplete="off" />
-          </label>
-          <label>
-            Session ID
-            <input id="sessionId" name="sessionId" type="text" autocomplete="off" />
-          </label>
-          <label>
-            Role
-            <select id="role" name="role">
-              <option value="employee" selected>employee</option>
-              <option value="manager">manager</option>
-              <option value="hr">hr</option>
-              <option value="finance">finance</option>
-              <option value="it">it</option>
-            </select>
-          </label>
-        </form>
-      </section>
+      <div class="workspace">
+        <section class="panel setup-panel">
+          <form class="control-grid" id="chatForm">
+            <label>
+              User ID
+              <input id="userId" name="userId" type="text" autocomplete="off" />
+            </label>
+            <label>
+              Session ID
+              <input id="sessionId" name="sessionId" type="text" autocomplete="off" />
+            </label>
+            <label>
+              Role
+              <select id="role" name="role">
+                <option value="employee" selected>employee</option>
+                <option value="manager">manager</option>
+                <option value="hr">hr</option>
+                <option value="finance">finance</option>
+                <option value="it">it</option>
+              </select>
+            </label>
+            <label>
+              Model
+              <select id="modelSelect" name="modelSelect">
+                <option value="auto" selected>auto</option>
+                <option value="gemini">gemini</option>
+                <option value="grok">grok</option>
+              </select>
+            </label>
+          </form>
+        </section>
 
-      <section class="panel chat-panel">
-        <div class="chat-header">
-          <div>
-            <h2>Live Chat</h2>
-            <p class="muted">Talk to any agent, approvals flagged in real time.</p>
+        <section class="panel chat-panel">
+          <div class="chat-header">
+            <div>
+              <h2>Live Chat</h2>
+              <p class="muted">Talk to any agent, approvals flagged in real time.</p>
+            </div>
+            <button class="ghost" id="clearChat" type="button">Clear</button>
           </div>
-          <button class="ghost" id="clearChat" type="button">Clear</button>
-        </div>
 
-        <div class="chat-log" id="chatLog"></div>
+          <div class="prompt-strip" id="promptStrip" aria-label="Prompt shortcuts"></div>
 
-        <div class="composer">
-          <textarea
-            id="message"
-            rows="2"
-            placeholder="Ask about reimbursements, policies, or approvals..."
-          ></textarea>
-          <div class="composer-actions">
-            <div class="hint">Shift+Enter for newline</div>
-            <button class="send" id="sendBtn" type="button">Send</button>
+          <div class="chat-log" id="chatLog"></div>
+
+          <div class="composer">
+            <textarea
+              id="message"
+              rows="2"
+              placeholder="Ask about reimbursements, policies, or approvals..."
+            ></textarea>
+            <div class="composer-actions">
+              <div class="hint" id="draftSignal">Ready</div>
+              <button class="send" id="sendBtn" type="button">Send</button>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+
+      </div>
     </main>
 
     <script src="/static/app.js"></script>

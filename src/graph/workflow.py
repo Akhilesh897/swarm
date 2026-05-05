@@ -1,3 +1,4 @@
+import re
 from typing import TypedDict
 from uuid import uuid4
 
@@ -6,6 +7,9 @@ from langgraph.graph import END, StateGraph
 from src.agents.registry import AGENT_REGISTRY
 from src.core.memory import MemoryManager
 from src.core.rbac import check_access, INTENT_GENERAL
+from src.core.intent_classifier import classify_intent, is_question
+from src.core.model_selector import resolve_model
+from src.core.router import route_agent
 
 memory_manager = MemoryManager()
 
@@ -16,6 +20,9 @@ class GraphState(TypedDict, total=False):
     query: str
     session_id: str
     intent: str
+    intent_type: str
+    model_preference: str | None
+    model: str
     routed_agent: str
     response: str
     approval_required: bool
@@ -23,17 +30,68 @@ class GraphState(TypedDict, total=False):
 
 
 def _preprocess(state: GraphState) -> GraphState:
-    query = state.get("query", "").lower()
-    if any(k in query for k in ["leave", "policy", "maternity", "hr"]):
+    raw_query = state.get("query", "")
+    query = _resolve_follow_up_query(state.get("session_id", ""), raw_query)
+    state["query"] = query
+    query = _normalize_intent_query(query)
+    state["intent_type"] = classify_intent(query)
+    if _contains_any(query, ["leave", "policy", "maternity", "paternity", "hr"]):
         intent = "hr"
-    elif any(k in query for k in ["ticket", "vpn", "laptop", "it", "asset"]):
+    elif _contains_any(query, ["ticket", "vpn", "laptop", "it", "asset", "inventory", "monitor", "keyboard", "mouse", "software", "printer", "network", "outlook"]):
         intent = "it"
-    elif any(k in query for k in ["payslip", "reimbursement", "tax", "finance"]):
+    elif _contains_any(query, ["payslip", "reimbursement", "expense", "claim", "receipt", "receipts", "tax", "finance"]):
         intent = "finance"
     else:
         intent = INTENT_GENERAL
     state["intent"] = intent
+    state["model"] = resolve_model(state.get("query", ""), intent, state.get("model_preference"))
     return state
+
+
+def _resolve_follow_up_query(session_id: str, query: str) -> str:
+    normalized = _normalize_intent_query(query).strip()
+    follow_up_phrases = {
+        "explain briefly",
+        "briefly explain",
+        "explain in brief",
+        "summarize",
+        "summarise",
+        "make it brief",
+        "short answer",
+    }
+    if normalized not in follow_up_phrases:
+        if normalized.isdigit():
+            inferred = _infer_follow_up_action(session_id, normalized)
+            if inferred:
+                return inferred
+        return query
+
+    for message in reversed(memory_manager.get_context(session_id)):
+        previous_query = str(message.get("query", "")).strip()
+        if previous_query and previous_query.lower() != query.lower():
+            return f"{previous_query} briefly"
+    return query
+
+
+def _infer_follow_up_action(session_id: str, token: str) -> str | None:
+    for message in reversed(memory_manager.get_context(session_id)):
+        response = str(message.get("response", "")).lower()
+        if "leave request id to cancel" in response:
+            return f"cancel leave request {token}"
+    return None
+
+
+def _normalize_intent_query(query: str) -> str:
+    lowered = query.lower()
+    replacements = {
+        "poicy": "policy",
+        "polcy": "policy",
+        "maternal": "maternity",
+        "wfh": "work from home",
+    }
+    for key, value in replacements.items():
+        lowered = lowered.replace(key, value)
+    return lowered
 
 
 def _rbac(state: GraphState) -> GraphState:
@@ -46,9 +104,22 @@ def _rbac(state: GraphState) -> GraphState:
 
 def _route(state: GraphState) -> GraphState:
     intent = state.get("intent", INTENT_GENERAL)
-    if intent in AGENT_REGISTRY:
-        state["routed_agent"] = intent
-    else:
+    intent_type = state.get("intent_type", "other")
+    if _is_topic_reset(state.get("query", "")):
+        state["routed_agent"] = route_agent(intent, intent_type)
+        if state["routed_agent"] not in AGENT_REGISTRY:
+            state["routed_agent"] = "general"
+        return state
+    if _should_use_rag(state.get("query", ""), intent_type):
+        state["routed_agent"] = "rag"
+        return state
+    if intent == INTENT_GENERAL:
+        last_agent = _last_routed_agent(state.get("session_id", ""))
+        if last_agent:
+            state["routed_agent"] = last_agent
+            return state
+    state["routed_agent"] = route_agent(intent, intent_type)
+    if state["routed_agent"] not in AGENT_REGISTRY:
         state["routed_agent"] = "general"
     return state
 
@@ -64,10 +135,55 @@ def _agent(state: GraphState) -> GraphState:
 def _memory(state: GraphState) -> GraphState:
     memory_manager.add_message(
         state["session_id"],
-        {"role": state["role"], "query": state["query"], "response": state["response"]},
+        {
+            "role": state["role"],
+            "query": state["query"],
+            "response": state["response"],
+            "intent": state.get("intent"),
+            "routed_agent": state.get("routed_agent"),
+        },
     )
     memory_manager.save_long_term(state["user_id"], state["session_id"], state["query"])
     return state
+
+
+def _last_routed_agent(session_id: str) -> str | None:
+    if not session_id:
+        return None
+    for message in reversed(memory_manager.get_context(session_id)):
+        agent = message.get("routed_agent")
+        if agent and agent in AGENT_REGISTRY and agent not in {"general", "rag"}:
+            return agent
+    return None
+
+
+def _is_topic_reset(query: str) -> bool:
+    text = query.lower().strip()
+    reset_phrases = (
+        "new request",
+        "start over",
+        "reset",
+        "clear context",
+        "switch topic",
+        "change topic",
+        "switch to hr",
+        "switch to it",
+        "switch to finance",
+        "go to hr",
+        "go to it",
+        "go to finance",
+    )
+    return any(phrase in text for phrase in reset_phrases)
+
+
+def _should_use_rag(query: str, intent_type: str) -> bool:
+    if intent_type in {"action", "status"}:
+        return False
+    return is_question(query)
+
+
+def _contains_any(text: str, terms: list[str]) -> bool:
+    return any(re.search(rf"\b{re.escape(term)}\b", text) for term in terms)
 
 
 def build_graph() -> StateGraph:
@@ -88,7 +204,7 @@ def build_graph() -> StateGraph:
     return graph.compile()
 
 
-def run_graph(user_id: str, role: str, query: str, session_id: str) -> GraphState:
+def run_graph(user_id: str, role: str, query: str, session_id: str, model_preference: str | None = None) -> GraphState:
     graph = build_graph()
     trace_id = f"trace_{uuid4().hex[:8]}"
     initial_state: GraphState = {
@@ -98,6 +214,7 @@ def run_graph(user_id: str, role: str, query: str, session_id: str) -> GraphStat
         "session_id": session_id,
         "trace_id": trace_id,
         "approval_required": False,
+        "model_preference": model_preference,
     }
     result = graph.invoke(initial_state)
     result["trace_id"] = trace_id
