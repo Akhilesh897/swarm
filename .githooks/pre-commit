@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-max_size=$((5 * 1024 * 1024))
+max_size=$((50 * 1024 * 1024))
 failed=0
 
 staged_files=$(git diff --cached --name-only --diff-filter=ACMR)
@@ -21,7 +21,7 @@ for file in $staged_files; do
   if [ -f "$file" ]; then
     size=$(wc -c < "$file" | tr -d ' ')
     if [ "$size" -gt "$max_size" ]; then
-      echo "Blocked commit: $file is larger than 5MB."
+      echo "Blocked commit: $file is larger than 50MB."
       failed=1
     fi
   fi

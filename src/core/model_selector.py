@@ -89,6 +89,18 @@ def _call_gemini(prompt: str, timeout: float) -> str | None:
     config = get_config()
     if not config.gemini_api_url or not config.gemini_api_key:
         return None
+        
+    if config.gemini_api_key.startswith("gsk_"):
+        # The user provided a Groq key for Gemini! Use OpenAI format.
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        model_name = config.gemini_model if config.gemini_model and "gemini" not in config.gemini_model else "llama-3.1-8b-instant"
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+        }
+        return _call_endpoint(url, config.gemini_api_key, payload, timeout, provider="grok") # use grok provider for Bearer token
+
     url = config.gemini_api_url.format(model=config.gemini_model)
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -102,9 +114,12 @@ def _call_endpoint(url: str, api_key: str, payload: dict, timeout: float, provid
     params = {"key": api_key} if provider == "gemini" and "key=" not in url else None
     try:
         response = httpx.post(url, json=payload, headers=headers, params=params, timeout=timeout)
+        if response.status_code != 200:
+            print(f"[{provider}] Error response:", response.status_code, response.text)
         response.raise_for_status()
         data = response.json()
-    except Exception:
+    except Exception as e:
+        print(f"[{provider}] Exception during API call:", e)
         return None
     return _extract_text(data)
 

@@ -5,6 +5,7 @@ This project implements an enterprise multi-agent AI copilot aligned to the prov
 ## What is included
 - Agent specs and architecture outline in [docs](docs)
 - FastAPI app with LangGraph workflow
+- Secure login with JWT-backed identity
 - Tool layer with placeholders for FastMCP-style execution
 - SQLite persistence for leaves, tickets, approvals, reimbursements
 - RAG adapter with ChromaDB fallback
@@ -20,7 +21,13 @@ This project implements an enterprise multi-agent AI copilot aligned to the prov
    ```bash
    uvicorn src.app:app --reload
    ```
-4. Call `POST /chat` with a user query and role.
+4. Open `http://127.0.0.1:8000/` for login or `http://127.0.0.1:8000/signup` to create an account. After successful auth, the UI redirects by role to `/employee`, `/manager`, or `/it-lead`.
+5. API clients can login with `POST /auth/login` or sign up with `POST /auth/signup`, then call `POST /chat` with `Authorization: Bearer <token>`.
+
+Seeded local demo users use password `ChangeMe123!`:
+- `employee@company.com` -> `employee`
+- `manager@company.com` -> `manager`
+- `itlead@company.com` -> `it_lead`
 
 ## Folder map
 - `src/app.py` FastAPI entry point
@@ -65,6 +72,7 @@ Avoid vague messages such as `latest`, `final`, or `update`.
 ## Notes
 - The tool layer is written as a FastAPI router to emulate MCP calls. Replace with a real FastMCP server if needed.
 - RAG ingestion expects documents under `data/docs`.
+- Set a strong `JWT_SECRET` outside local development.
 
 ## RAG ingestion
 Place `.txt` or `.md` files under `data/docs`, then run:

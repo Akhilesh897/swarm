@@ -1,4 +1,5 @@
 import os
+import json
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -33,7 +34,10 @@ class AppConfig:
     gemini_api_key: str
     gemini_model: str
     jwt_secret: str
+    pa_callback_secret: str
     inventory_min_stock: int
+    company_email_domain: str
+    admin_email_roles: dict[str, str]
 
 
 def get_config() -> AppConfig:
@@ -45,6 +49,20 @@ def get_config() -> AppConfig:
         grok_api_key = legacy_grok_model
     if not gemini_api_key and legacy_gemini_model.startswith("AIza"):
         gemini_api_key = legacy_gemini_model
+
+    admin_email_roles_raw = os.getenv(
+        "ADMIN_EMAIL_ROLES",
+        '{"manager@company.com":"manager","itlead@company.com":"it_lead"}',
+    )
+    try:
+        parsed_roles = json.loads(admin_email_roles_raw)
+    except json.JSONDecodeError:
+        parsed_roles = {}
+    admin_email_roles = {
+        str(email).strip().lower(): str(role).strip().lower()
+        for email, role in parsed_roles.items()
+        if str(email).strip() and str(role).strip()
+    }
 
     return AppConfig(
         app_name=os.getenv("APP_NAME", "Enterprise Multi-Agent Copilot"),
@@ -76,5 +94,12 @@ def get_config() -> AppConfig:
         gemini_api_key=gemini_api_key,
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
         jwt_secret=os.getenv("JWT_SECRET", "replace_me"),
+        pa_callback_secret=os.getenv("PA_CALLBACK_SECRET", ""),
         inventory_min_stock=int(os.getenv("INVENTORY_MIN_STOCK", "1")),
+        company_email_domain=os.getenv("COMPANY_EMAIL_DOMAIN", "company.com").strip().lower(),
+        admin_email_roles=admin_email_roles,
     )
+
+# trigger reload
+
+# trigger reload 2

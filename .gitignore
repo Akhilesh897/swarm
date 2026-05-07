@@ -1,28 +1,24 @@
-# Python cache
+# env
+.env
+.venv/
+
+# python
 __pycache__/
 *.pyc
 
-# Virtual environments
-.venv/
-.venv*/
-env/
-
-# Environment files
-.env
-
-# Databases
-*.db
-
-# Logs
-logs/
+# logs
 *.log
 
-# Vector DB / embeddings
-vector_db/
+# db
+*.db
+
+# vector db
 data/vector_db/
 
-# OS files
-.DS_Store
+# vscode optional
+.vscode/
 
-# Optional local documents
-*.pdf
+# temp/test
+tmp_*.py
+patch_*.py
+test_*.py

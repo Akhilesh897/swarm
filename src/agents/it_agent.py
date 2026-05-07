@@ -4,7 +4,7 @@ from src.agents.base import AgentResult, BaseAgent
 from src.config import get_config
 from src.tools import sql
 
-IT_ROLE = "it"
+IT_ROLE = "it_lead"
 
 
 class ITAgent(BaseAgent):
@@ -18,7 +18,7 @@ class ITAgent(BaseAgent):
 
         if "inventory" in query:
             if role != IT_ROLE:
-                return AgentResult(response="Access denied. Inventory tools are available only to the IT team.")
+                return AgentResult(response="Access denied. Inventory tools are available only to the IT team. You can still create tickets or request assets.")
             inventory = sql.get_inventory()
             if not inventory:
                 return AgentResult(response="Inventory is empty.")
@@ -27,7 +27,7 @@ class ITAgent(BaseAgent):
 
         if any(k in query for k in ["assign ticket", "assign"]):
             if role != IT_ROLE:
-                return AgentResult(response="Access denied. Only IT can assign tickets.")
+                return AgentResult(response="Access denied. Only IT can assign tickets. You can still create tickets and track your own status.")
             ticket_id = _extract_id(query)
             engineer = _extract_engineer(query) or user_id
             if not ticket_id:
@@ -37,7 +37,7 @@ class ITAgent(BaseAgent):
 
         if any(k in query for k in ["resolve ticket", "close ticket", "resolved"]):
             if role != IT_ROLE:
-                return AgentResult(response="Access denied. Only IT can resolve tickets.")
+                return AgentResult(response="Access denied. Only IT can resolve tickets. You can still create tickets and track your own status.")
             ticket_id = _extract_id(query)
             if not ticket_id:
                 return AgentResult(response="Please provide the ticket id to resolve.")
@@ -136,4 +136,7 @@ def _trigger_it_approval_flow(result: sql.AssetRequestResult, user_id: str, asse
         "asset_type": asset_type,
         "approval_stage": result.approval_stage,
     }
-    httpx.post(config.power_automate_it_url, json=payload, timeout=10)
+    try:
+        httpx.post(config.power_automate_it_url, json=payload, timeout=10)
+    except httpx.HTTPError as exc:
+        print("Power Automate IT call failed:", str(exc))

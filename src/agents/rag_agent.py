@@ -10,21 +10,20 @@ from src.tools.vector_store import RAGStore, RetrievedDoc
 rag_store = RAGStore(get_config().vector_db_path)
 memory_manager = MemoryManager()
 
+import logging
+import os
+from openai import OpenAI
+
 RAG_PROMPT = (
-    "You are an enterprise policy assistant.\n\n"
-    "Answer ONLY using the provided context. If the context does not contain a direct answer, "
-    "say: - No relevant information found in the provided context.\n\n"
-    "Rules:\n"
-    "- Use only clauses that directly match the user's topic\n"
-    "- Ignore generic handbook, whistleblowing, anti-bribery, and unrelated procedure text unless the question asks for it\n"
-    "- Do NOT hallucinate\n"
-    "- Be concise and structured\n"
-    "- Preserve exact numbers, durations, eligibility, approvers, timelines, and exceptions\n"
-    "- If question asks a person, return only the name\n"
-    "- If question asks a number, return only the number\n"
-    "- If question asks a policy or procedure, return bullet points\n\n"
-    "Question: {query}\n"
-    "Context: {context}"
+    "SYSTEM:\n"
+    "You are an internal enterprise assistant.\n"
+    "Answer ONLY using the provided context.\n"
+    "If information is unavailable in context, clearly say so.\n"
+    "Do not hallucinate policies or approvals.\n\n"
+    "CONTEXT:\n"
+    "{context}\n\n"
+    "USER QUERY:\n"
+    "{query}"
 )
 
 TERM_ALIASES = {
@@ -61,9 +60,11 @@ class RAGAgent(BaseAgent):
         query = state.get("query", "")
         role = state.get("role", "")
         model = state.get("model")
+        intent = state.get("intent", "general")
         response = build_rag_response(
             query,
             role=role,
+            intent=intent,
             k=6,
             model=model,
             user_id=state.get("user_id"),
@@ -79,11 +80,15 @@ def ingest_documents(docs: list[RetrievedDoc]) -> None:
 def build_rag_response(
     query: str,
     role: str,
+    intent: str = "general",
     k: int = 3,
     model: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
 ) -> str:
+    logging.info(f"[QUERY] {query}")
+    logging.info(f"[INTENT] {intent}")
+    
     profile = _build_query_profile(query, user_id, session_id)
     cached = rag_store.cache_get(profile.retrieval_query, role)
     if cached:
@@ -107,7 +112,7 @@ def build_rag_response(
             rerank_k=18,
         )
     if not results:
-        return "- No relevant information found in the provided context."
+        return _general_knowledge_fallback(query, model)
     results = rag_store.expand_context(results, window=2)
 
     scored = []
@@ -117,18 +122,28 @@ def build_rag_response(
             scored.append((score, doc))
 
     if not scored:
-        return "- No relevant information found in the provided context."
+        return _general_knowledge_fallback(query, model)
 
     scored.sort(key=lambda item: item[0], reverse=True)
     best_score = scored[0][0]
     top_docs = _select_context_docs(scored, best_score)
     if profile.specific_topic and not _has_direct_evidence(top_docs, profile.required_terms, profile.phrases):
-        return "- No relevant information found in the provided context."
+        return _general_knowledge_fallback(query, model)
 
     answer = _synthesize_answer(query, top_docs, profile.terms, profile.phrases, model=model)
     if "No relevant information found" not in answer:
         rag_store.cache_set(profile.retrieval_query, role, answer)
+    elif model:
+        return _general_knowledge_fallback(query, model)
     return answer
+
+def _general_knowledge_fallback(query: str, model: str | None) -> str:
+    if model:
+        fallback_prompt = f"Please answer the following question to the best of your general knowledge:\n\nQuestion: {query}"
+        model_response = call_model(model, fallback_prompt)
+        if model_response:
+            return f"- Found no local documents. From general knowledge:\n{model_response}"
+    return "- No relevant information found in the provided context."
 
 
 def _synthesize_answer(
@@ -144,17 +159,13 @@ def _synthesize_answer(
         if summary_items
         else "- No relevant information found in the provided context."
     )
-    if _answer_quality(fallback_answer) >= 8:
-        return fallback_answer
-    if model:
-        context = _build_chunks(docs, terms, phrases)
-        prompt = RAG_PROMPT.format(query=query, context=context)
-        model_response = call_model(model, prompt)
-        if model_response:
-            normalized = _normalize_model_answer(query, model_response)
-            if _answer_quality(normalized) >= _answer_quality(fallback_answer):
-                return normalized
-    return fallback_answer
+    
+    context = _build_chunks(docs, terms, phrases)
+    logging.info(f"[CHUNK COUNT] {len(docs)}")
+    logging.info(f"[RETRIEVED CHUNKS]\n{context}")
+
+    # Just return the context chunks. The central generator will handle Groq execution.
+    return context if context else fallback_answer
 
 
 def _answer_quality(answer: str) -> int:
@@ -178,8 +189,14 @@ def _answer_quality(answer: str) -> int:
 
 def _build_chunks(docs: list[RetrievedDoc], terms: set[str], phrases: list[str]) -> str:
     lines = []
-    for idx, doc in enumerate(docs[:6], start=1):
+    seen_excerpts = set()
+    idx = 1
+    for doc in docs[:8]:
         excerpt = _relevant_excerpt(doc.content, terms, phrases)
+        if not excerpt or excerpt in seen_excerpts:
+            continue
+        seen_excerpts.add(excerpt)
+        
         path = doc.metadata.get("path", "")
         section = doc.metadata.get("section", "")
         topic = doc.metadata.get("topic", "")
@@ -187,10 +204,12 @@ def _build_chunks(docs: list[RetrievedDoc], terms: set[str], phrases: list[str])
         meta = ", ".join(part for part in (section, topic, subtopic) if part)
         source = f"source: {path}" if path else ""
         extras = ", ".join(part for part in (meta, source) if part)
+        
         if extras:
             lines.append(f"[{idx}] {excerpt} ({extras})")
         else:
             lines.append(f"[{idx}] {excerpt}")
+        idx += 1
     return "\n".join(lines)
 
 

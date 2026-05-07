@@ -1,5 +1,7 @@
 import logging
 import sqlite3
+import hashlib
+import secrets
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -7,6 +9,7 @@ from pathlib import Path
 from src.config import get_config
 
 logger = logging.getLogger(__name__)
+PASSWORD_HASH_ITERATIONS = 260_000
 
 
 @dataclass
@@ -65,6 +68,19 @@ def init_db() -> None:
     conn = _get_conn()
     
     cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            role TEXT NOT NULL,
+            department TEXT,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS leaves (
@@ -193,9 +209,59 @@ def init_db() -> None:
     _ensure_leave_columns(cur)
     _ensure_ticket_columns(cur)
     _ensure_asset_columns(cur)
+    _seed_default_users(cur)
     _seed_it_reference_data(cur)
     conn.commit()
     conn.close()
+
+
+def get_user_by_email(email: str) -> dict | None:
+    normalized = email.lower().strip()
+    if not normalized:
+        return None
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT user_id, email, role, department, password_hash
+        FROM users
+        WHERE email = ?
+        LIMIT 1
+        """,
+        (normalized,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "user_id": row[0],
+        "email": row[1],
+        "role": row[2],
+        "department": row[3],
+        "password_hash": row[4],
+    }
+
+
+def create_user(user_id: str, email: str, role: str, password: str, department: str | None = None) -> dict:
+    normalized_email = email.lower().strip()
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO users (user_id, email, role, department, password_hash, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, normalized_email, role, department, _hash_password(password), _now()),
+    )
+    conn.commit()
+    conn.close()
+    return {
+        "user_id": user_id,
+        "email": normalized_email,
+        "role": role,
+        "department": department,
+    }
 
 
 def apply_leave(user_id: str, start_date: str, end_date: str, reason: str, leave_type: str = "general") -> LeaveResult:
@@ -396,7 +462,7 @@ def list_tickets(user_id: str, role: str, status: str | None = None) -> list[dic
     cur = conn.cursor()
     params: list[str] = []
     where = []
-    if role != "it":
+    if role not in {"manager", "it", "it_lead", "admin"}:
         where.append("user_id = ?")
         params.append(user_id)
     if status:
@@ -466,7 +532,7 @@ def request_asset(user_id: str, asset_type: str) -> AssetRequestResult:
 def list_assets(user_id: str, role: str) -> list[dict]:
     conn = _get_conn()
     cur = conn.cursor()
-    if role == "it":
+    if role in {"manager", "it", "it_lead", "admin"}:
         cur.execute("SELECT id, user_id, asset_type, status, approval_stage, fulfilled_by FROM assets ORDER BY id DESC")
     else:
         cur.execute(
@@ -558,16 +624,72 @@ def update_asset_approval(
     conn = _get_conn()
     cur = conn.cursor()
     cur.execute(
-        "UPDATE approvals SET status = ?, approver_id = ? WHERE id = ?",
-        (normalized_status, approver_id, approval_id),
+        "SELECT request_type, request_id, status, approver_id, approval_stage FROM approvals WHERE id = ?",
+        (approval_id,),
     )
+    approval_row = cur.fetchone()
+    if not approval_row:
+        conn.close()
+        return AssetApprovalUpdate(
+            asset_id=asset_id,
+            approval_id=approval_id,
+            status="invalid",
+            approval_stage=approval_stage,
+            next_stage=None,
+            next_approval_id=None,
+            detail="approval_not_found",
+        )
+    request_type, request_id, approval_status, existing_approver, stored_stage = approval_row
+    if request_type != "asset" or request_id != asset_id:
+        conn.close()
+        return AssetApprovalUpdate(
+            asset_id=asset_id,
+            approval_id=approval_id,
+            status="invalid",
+            approval_stage=approval_stage,
+            next_stage=None,
+            next_approval_id=None,
+            detail="approval_asset_mismatch",
+        )
+    if approval_status != "pending":
+        conn.close()
+        return AssetApprovalUpdate(
+            asset_id=asset_id,
+            approval_id=approval_id,
+            status=approval_status,
+            approval_stage=approval_stage,
+            next_stage=None,
+            next_approval_id=None,
+            detail="approval_not_pending",
+        )
+    if stored_stage and stored_stage != approval_stage:
+        conn.close()
+        return AssetApprovalUpdate(
+            asset_id=asset_id,
+            approval_id=approval_id,
+            status="invalid",
+            approval_stage=approval_stage,
+            next_stage=None,
+            next_approval_id=None,
+            detail="approval_stage_mismatch",
+        )
+    if existing_approver:
+        conn.close()
+        return AssetApprovalUpdate(
+            asset_id=asset_id,
+            approval_id=approval_id,
+            status="invalid",
+            approval_stage=approval_stage,
+            next_stage=None,
+            next_approval_id=None,
+            detail="approval_already_actioned",
+        )
     cur.execute(
         "SELECT asset_type, approval_stage FROM assets WHERE id = ?",
         (asset_id,),
     )
     row = cur.fetchone()
     if not row:
-        conn.commit()
         conn.close()
         return AssetApprovalUpdate(
             asset_id=asset_id,
@@ -580,6 +702,21 @@ def update_asset_approval(
         )
 
     asset_type, current_stage = row[0], row[1]
+    if current_stage and current_stage != approval_stage:
+        conn.close()
+        return AssetApprovalUpdate(
+            asset_id=asset_id,
+            approval_id=approval_id,
+            status="invalid",
+            approval_stage=approval_stage,
+            next_stage=None,
+            next_approval_id=None,
+            detail="asset_stage_mismatch",
+        )
+    cur.execute(
+        "UPDATE approvals SET status = ?, approver_id = ? WHERE id = ?",
+        (normalized_status, approver_id, approval_id),
+    )
     if normalized_status != "approved":
         cur.execute(
             "UPDATE assets SET status = 'rejected', approval_stage = 'rejected' WHERE id = ?",
@@ -708,6 +845,7 @@ def _leave_days(start_date: str, end_date: str) -> int:
 
 
 def _validate_leave_dates(cur: sqlite3.Cursor, user_id: str, start_date: str, end_date: str) -> tuple[str, str | None]:
+    import logging
     try:
         start = datetime.fromisoformat(start_date).date()
         end = datetime.fromisoformat(end_date).date()
@@ -727,8 +865,10 @@ def _validate_leave_dates(cur: sqlite3.Cursor, user_id: str, start_date: str, en
         existing_start = datetime.fromisoformat(row[0]).date()
         existing_end = datetime.fromisoformat(row[1]).date()
         if _ranges_overlap(start, end, existing_start, existing_end):
+            logging.info(f"[OVERLAP VALIDATION] Found overlap between requested {start}-{end} and existing {existing_start}-{existing_end}")
             return "rejected", "Leave dates overlap an existing request."
 
+    logging.info(f"[OVERLAP VALIDATION] Dates {start}-{end} are clean. No overlaps found.")
     return "pending", None
 
 
@@ -888,6 +1028,38 @@ def _seed_it_reference_data(cur: sqlite3.Cursor) -> None:
                 "INSERT INTO inventory (asset_type, quantity, updated_at) VALUES (?, ?, ?)",
                 (asset_type, quantity, now),
             )
+
+
+def _seed_default_users(cur: sqlite3.Cursor) -> None:
+    cur.execute("SELECT COUNT(*) FROM users")
+    if cur.fetchone()[0] > 0:
+        return
+
+    now = _now()
+    users = [
+        ("emp001", "employee@company.com", "employee", "hr", "ChangeMe123!"),
+        ("mgr001", "manager@company.com", "manager", "operations", "ChangeMe123!"),
+        ("it001", "itlead@company.com", "it_lead", "it", "ChangeMe123!"),
+    ]
+    for user_id, email, role, department, plain_password in users:
+        cur.execute(
+            """
+            INSERT INTO users (user_id, email, role, department, password_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, email, role, department, _hash_password(plain_password), now),
+        )
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PASSWORD_HASH_ITERATIONS,
+    ).hex()
+    return f"pbkdf2_sha256${PASSWORD_HASH_ITERATIONS}${salt}${digest}"
 
 
 def _ticket_row(row: tuple) -> dict:

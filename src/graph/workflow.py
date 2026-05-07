@@ -6,6 +6,7 @@ from langgraph.graph import END, StateGraph
 
 from src.agents.registry import AGENT_REGISTRY
 from src.core.memory import MemoryManager
+from src.core.date_parser import parse_dates
 from src.core.rbac import check_access, INTENT_GENERAL
 from src.core.intent_classifier import classify_intent, is_question
 from src.core.model_selector import resolve_model
@@ -37,7 +38,7 @@ def _preprocess(state: GraphState) -> GraphState:
     state["intent_type"] = classify_intent(query)
     if _contains_any(query, ["leave", "policy", "maternity", "paternity", "hr"]):
         intent = "hr"
-    elif _contains_any(query, ["ticket", "vpn", "laptop", "it", "asset", "inventory", "monitor", "keyboard", "mouse", "software", "printer", "network", "outlook"]):
+    elif _contains_any(query, ["ticket", "tickets", "vpn", "laptop", "it", "asset", "assets", "inventory", "monitor", "keyboard", "mouse", "software", "printer", "network", "outlook"]):
         intent = "it"
     elif _contains_any(query, ["payslip", "reimbursement", "expense", "claim", "receipt", "receipts", "tax", "finance"]):
         intent = "finance"
@@ -45,11 +46,17 @@ def _preprocess(state: GraphState) -> GraphState:
         intent = INTENT_GENERAL
     state["intent"] = intent
     state["model"] = resolve_model(state.get("query", ""), intent, state.get("model_preference"))
+    import logging
+    logging.info(f"[INTENT DETECTION] Intent: {intent}, Type: {state['intent_type']}")
     return state
 
 
 def _resolve_follow_up_query(session_id: str, query: str) -> str:
     normalized = _normalize_intent_query(query).strip()
+    inferred = _infer_date_follow_up_action(session_id, normalized)
+    if inferred:
+        return inferred
+
     follow_up_phrases = {
         "explain briefly",
         "briefly explain",
@@ -78,7 +85,35 @@ def _infer_follow_up_action(session_id: str, token: str) -> str | None:
         response = str(message.get("response", "")).lower()
         if "leave request id to cancel" in response:
             return f"cancel leave request {token}"
+        if "leave request id to check status" in response:
+            return f"leave approval status {token}"
+        if "ticket id to assign" in response:
+            return f"assign ticket {token}"
+        if "ticket id to resolve" in response:
+            return f"resolve ticket {token}"
     return None
+
+
+def _infer_date_follow_up_action(session_id: str, query: str) -> str | None:
+    if not session_id or _contains_any(query, ["leave", "policy", "hr", "cancel", "withdraw"]):
+        return None
+    dates = parse_dates(query)
+    if len(dates) < 2:
+        return None
+    for message in reversed(memory_manager.get_context(session_id)):
+        response = str(message.get("response", "")).lower()
+        routed_agent = str(message.get("routed_agent", ""))
+        if routed_agent == "hr" and _asks_for_leave_dates(response):
+            return f"apply leave from {dates[0]} to {dates[1]}"
+    return None
+
+
+def _asks_for_leave_dates(response: str) -> bool:
+    return (
+        "start and end dates" in response
+        or "start date" in response and "end date" in response
+        or "yyyy-mm-dd" in response and "leave" in response
+    )
 
 
 def _normalize_intent_query(query: str) -> str:
@@ -102,25 +137,36 @@ def _rbac(state: GraphState) -> GraphState:
     return state
 
 
+def _after_rbac(state: GraphState) -> str:
+    if state.get("response"):
+        return "memory"
+    return "route"
+
+
 def _route(state: GraphState) -> GraphState:
+    import logging
     intent = state.get("intent", INTENT_GENERAL)
     intent_type = state.get("intent_type", "other")
     if _is_topic_reset(state.get("query", "")):
         state["routed_agent"] = route_agent(intent, intent_type)
         if state["routed_agent"] not in AGENT_REGISTRY:
             state["routed_agent"] = "general"
+        logging.info(f"[AGENT ROUTING] Routed to: {state['routed_agent']}")
         return state
     if _should_use_rag(state.get("query", ""), intent_type):
         state["routed_agent"] = "rag"
+        logging.info(f"[AGENT ROUTING] Routed to: {state['routed_agent']}")
         return state
     if intent == INTENT_GENERAL:
         last_agent = _last_routed_agent(state.get("session_id", ""))
         if last_agent:
             state["routed_agent"] = last_agent
+            logging.info(f"[AGENT ROUTING] Routed to: {state['routed_agent']} (from STM)")
             return state
     state["routed_agent"] = route_agent(intent, intent_type)
     if state["routed_agent"] not in AGENT_REGISTRY:
         state["routed_agent"] = "general"
+    logging.info(f"[AGENT ROUTING] Routed to: {state['routed_agent']}")
     return state
 
 
@@ -186,19 +232,32 @@ def _contains_any(text: str, terms: list[str]) -> bool:
     return any(re.search(rf"\b{re.escape(term)}\b", text) for term in terms)
 
 
+def _synthesize(state: GraphState) -> GraphState:
+    from src.core.generator import generate_final_response
+    import logging
+    logging.info(f"[BACKEND RESULT] {state.get('response', '')}")
+    if state.get("response") == "Access denied for this request.":
+        return state
+    final = generate_final_response(state.get("query", ""), state.get("response", ""), state.get("session_id", ""))
+    state["response"] = final
+    return state
+
+
 def build_graph() -> StateGraph:
     graph = StateGraph(GraphState)
     graph.add_node("preprocess", _preprocess)
     graph.add_node("rbac", _rbac)
     graph.add_node("route", _route)
     graph.add_node("agent", _agent)
+    graph.add_node("synthesize", _synthesize)
     graph.add_node("memory", _memory)
 
     graph.set_entry_point("preprocess")
     graph.add_edge("preprocess", "rbac")
-    graph.add_edge("rbac", "route")
+    graph.add_conditional_edges("rbac", _after_rbac, {"memory": "memory", "route": "route"})
     graph.add_edge("route", "agent")
-    graph.add_edge("agent", "memory")
+    graph.add_edge("agent", "synthesize")
+    graph.add_edge("synthesize", "memory")
     graph.add_edge("memory", END)
 
     return graph.compile()

@@ -1,13 +1,62 @@
 # API Guide
 
-## POST /chat
+## POST /auth/login
 Request:
 ```json
 {
-  "user_id": "u123",
+  "email": "employee@company.com",
+  "password": "ChangeMe123!"
+}
+```
+
+Response:
+```json
+{
+  "access_token": "jwt-token",
+  "token_type": "bearer",
+  "user_id": "emp001",
   "role": "employee",
+  "department": "hr"
+}
+```
+
+## POST /auth/signup
+Request:
+```json
+{
+  "email": "new.user@example.com",
+  "password": "secret1"
+}
+```
+
+Response matches `/auth/login`. Newly signed up users receive the `employee` role unless their email is mapped in `ADMIN_EMAIL_ROLES`.
+
+## GET /auth/next
+Header:
+```http
+Authorization: Bearer <access_token>
+```
+
+Response:
+```json
+{
+  "path": "/employee",
+  "role": "employee"
+}
+```
+
+## POST /chat
+Header:
+```http
+Authorization: Bearer <access_token>
+```
+
+Request:
+```json
+{
   "query": "Apply leave for 2 days next week",
-  "session_id": "s1"
+  "session_id": "s1",
+  "model_preference": "auto"
 }
 ```
 

@@ -1,4 +1,4 @@
-const loginBtn = document.getElementById("loginBtn");
+const signupBtn = document.getElementById("signupBtn");
 const authStatus = document.getElementById("authStatus");
 const emailInput = document.getElementById("email");
 const passwordInput = document.getElementById("password");
@@ -27,7 +27,7 @@ function saveAuth(data, email) {
   localStorage.setItem(STORAGE_KEYS.role, data.role || "");
 }
 
-async function login() {
+async function signup() {
   const email = emailInput.value.trim().toLowerCase();
   const password = passwordInput.value;
   if (!email || !password) {
@@ -35,32 +35,30 @@ async function login() {
     return;
   }
 
-  authStatus.textContent = "Checking credentials...";
+  authStatus.textContent = "Creating account...";
   try {
-    const response = await fetch("/auth/login", {
+    const response = await fetch("/auth/signup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
     });
+    const data = await response.json();
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(data.detail || `HTTP ${response.status}`);
     }
 
-    const data = await response.json();
     saveAuth(data, email);
-    authStatus.textContent = "Login successful. Opening workspace...";
+    authStatus.textContent = "Account created. Opening workspace...";
     window.location.href = rolePath(data.role);
   } catch (error) {
-    authStatus.textContent = "Authentication failed.";
+    authStatus.textContent = error.message || "Signup failed.";
   }
 }
 
-emailInput.value = localStorage.getItem(STORAGE_KEYS.email) || "";
-
-loginBtn.addEventListener("click", login);
+signupBtn.addEventListener("click", signup);
 passwordInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
-    login();
+    signup();
   }
 });

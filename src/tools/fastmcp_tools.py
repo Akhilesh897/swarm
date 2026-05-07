@@ -76,14 +76,14 @@ async def list_tickets(user_id: str, role: str = "employee") -> dict[str, Any]:
 
 @router.post("/assign_ticket")
 async def assign_ticket(ticket_id: int, engineer_id: str, role: str = "employee") -> dict[str, Any]:
-    if role != "it":
+    if role not in {"it", "it_lead"}:
         return {"ticket_id": ticket_id, "status": "access_denied"}
     return {"ticket_id": ticket_id, "status": sql.assign_ticket(ticket_id, engineer_id)}
 
 
 @router.post("/resolve_ticket")
 async def resolve_ticket(ticket_id: int, engineer_id: str, role: str = "employee") -> dict[str, Any]:
-    if role != "it":
+    if role not in {"it", "it_lead"}:
         return {"ticket_id": ticket_id, "status": "access_denied"}
     return {"ticket_id": ticket_id, "status": sql.resolve_ticket(ticket_id, engineer_id)}
 
@@ -105,7 +105,7 @@ async def list_assets(user_id: str, role: str = "employee") -> dict[str, Any]:
 
 @router.get("/inventory")
 async def inventory(role: str = "employee") -> dict[str, Any]:
-    if role != "it":
+    if role not in {"it", "it_lead"}:
         return {"status": "access_denied", "inventory": []}
     return {"status": "ok", "inventory": sql.get_inventory()}
 

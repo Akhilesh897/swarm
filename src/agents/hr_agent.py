@@ -1,12 +1,15 @@
 import re
-from datetime import date, timedelta
+import logging
 
 import httpx
+from src.core.date_parser import parse_dates
 
 from src.agents.base import AgentResult, BaseAgent
 from src.agents.rag_agent import build_rag_response
 from src.config import get_config
 from src.tools import sql
+
+logger = logging.getLogger(__name__)
 
 
 class HRAgent(BaseAgent):
@@ -16,6 +19,9 @@ class HRAgent(BaseAgent):
         query = _normalize_query(state.get("query", ""))
         role = state.get("role", "employee")
         intent_type = state.get("intent_type", "other")
+
+        if _is_ambiguous_confirmation(query):
+            return AgentResult(response="I still need the start and end dates before I can submit a leave request. Please provide them in YYYY-MM-DD format, for example 2026-05-07 to 2026-05-09.")
 
         if intent_type == "policy" or _is_policy_query(query):
             response = build_rag_response(query, role=role, k=3)
@@ -87,13 +93,7 @@ class HRAgent(BaseAgent):
 
 
 def _extract_dates(text: str) -> list[str]:
-    dates = re.findall(r"\d{4}-\d{2}-\d{2}", text)
-    if dates:
-        return dates
-    # fallback: next week for two days
-    start = date.today() + timedelta(days=7)
-    end = start + timedelta(days=1)
-    return [start.isoformat(), end.isoformat()]
+    return parse_dates(text)
 
 
 def _extract_leave_type(text: str) -> str:
@@ -137,6 +137,19 @@ def _normalize_query(text: str) -> str:
     return lowered
 
 
+def _is_ambiguous_confirmation(text: str) -> bool:
+    return text.strip() in {
+        "yes",
+        "y",
+        "ok",
+        "okay",
+        "confirm",
+        "confirmed",
+        "sure",
+        "go ahead",
+    }
+
+
 def _notify_manager_if_needed(
     request_id: int,
     user_id: str,
@@ -157,4 +170,7 @@ def _notify_manager_if_needed(
         "reason": "",
         "approver_email": config.manager_email,
     }
-    httpx.post(config.power_automate_email_url, json=payload, timeout=10)
+    try:
+        httpx.post(config.power_automate_email_url, json=payload, timeout=10)
+    except httpx.HTTPError as exc:
+        logger.warning("Manager leave notification failed for request %s: %s", request_id, exc)

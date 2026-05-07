@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>SWARM Login</title>
+    <title>SWARM Sign Up</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -26,29 +26,29 @@
       </nav>
 
       <section class="auth-card">
-        <p class="eyebrow">Enterprise Copilot</p>
-        <h1>Login</h1>
-        <p class="subtitle">Enter your credentials to continue into your role workspace.</p>
+        <p class="eyebrow">New Account</p>
+        <h1>Sign up</h1>
+        <p class="subtitle">Create an employee account, then continue into the secured workspace.</p>
 
-        <form class="auth-form" id="loginForm">
+        <form class="auth-form" id="signupForm">
           <label>
             Email
             <input id="email" name="email" type="email" autocomplete="email" />
           </label>
           <label>
             Password
-            <input id="password" name="password" type="password" autocomplete="current-password" />
+            <input id="password" name="password" type="password" autocomplete="new-password" />
           </label>
-          <button class="send" id="loginBtn" type="button">Login</button>
+          <button class="send" id="signupBtn" type="button">Sign up</button>
         </form>
 
         <div class="auth-footer">
-          <p class="muted" id="authStatus">Login to continue.</p>
-          <a class="text-link" href="/signup">Create an account</a>
+          <p class="muted" id="authStatus">Create an account to continue.</p>
+          <a class="text-link" href="/">Already have an account?</a>
         </div>
       </section>
     </main>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/signup.js"></script>
   </body>
 </html>
