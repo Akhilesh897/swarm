@@ -18,6 +18,8 @@ class LeaveResult:
     approval_required: bool
     status: str
     detail: str | None = None
+    approval_id: int | None = None
+    approval_stage: str | None = None
 
 
 @dataclass
@@ -26,6 +28,8 @@ class TicketResult:
     status: str
     detail: str
     matched_record: dict | None = None
+    approval_id: int | None = None
+    approval_stage: str | None = None
 
 
 @dataclass
@@ -47,6 +51,17 @@ class AssetApprovalUpdate:
     detail: str | None = None
 
 
+@dataclass
+class TicketApprovalUpdate:
+    ticket_id: int
+    approval_id: int
+    status: str
+    approval_stage: str
+    next_stage: str | None
+    next_approval_id: int | None = None
+    detail: str | None = None
+
+
 ASSET_APPROVAL_STAGES = [
     "manager_approval",
     "it_lead_approval",
@@ -58,8 +73,9 @@ ASSET_APPROVAL_STAGES = [
 def _get_conn() -> sqlite3.Connection: 
     config = get_config()
     Path(config.app_db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(config.app_db_path, timeout=10)
+    conn = sqlite3.connect(config.app_db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
     return conn
 
 
@@ -278,14 +294,20 @@ def apply_leave(user_id: str, start_date: str, end_date: str, reason: str, leave
     conn.close()
 
     approval_required = status == "pending"
+    approval_id = None
+    approval_stage = None
     if approval_required:
-        create_approval("leave", request_id, approver_id="")
+        approval_stage = "manager_approval"
+        approval_id = create_approval("leave", request_id, approver_id="", approval_stage=approval_stage)
+        log_event(user_id, "leave.submitted", f"request_id={request_id} leave_type={leave_type}")
 
     return LeaveResult(
         request_id=request_id,
         approval_required=approval_required,
         status=status,
         detail=detail,
+        approval_id=approval_id,
+        approval_stage=approval_stage,
     )
 
 
@@ -348,8 +370,17 @@ def cancel_leave(user_id: str, request_id: int) -> str:
         "UPDATE leaves SET status = 'canceled' WHERE id = ? AND user_id = ?",
         (request_id, user_id),
     )
+    cur.execute(
+        """
+        UPDATE approvals
+        SET status = 'canceled', approver_id = COALESCE(NULLIF(approver_id, ''), ?)
+        WHERE request_type = 'leave' AND request_id = ? AND status = 'pending'
+        """,
+        (user_id, request_id),
+    )
     conn.commit()
     conn.close()
+    log_event(user_id, "leave.canceled", f"request_id={request_id}")
     return "canceled"
 
 
@@ -398,7 +429,14 @@ def create_it_ticket_with_checks(user_id: str, issue_type: str, priority: str, d
         )
 
     ticket_id = create_ticket(user_id, issue_type, priority, detail=detail)
-    return TicketResult(ticket_id=ticket_id, status="created", detail=f"Ticket {ticket_id} created for {issue_type}.")
+    approval_id = create_approval("ticket", ticket_id, approver_id="", approval_stage="manager_approval")
+    return TicketResult(
+        ticket_id=ticket_id,
+        status="created",
+        detail=f"Ticket {ticket_id} created for {issue_type}.",
+        approval_id=approval_id,
+        approval_stage="manager_approval",
+    )
 
 
 def find_duplicate_open_ticket(user_id: str, issue_type: str) -> dict | None:
@@ -462,7 +500,7 @@ def list_tickets(user_id: str, role: str, status: str | None = None) -> list[dic
     cur = conn.cursor()
     params: list[str] = []
     where = []
-    if role not in {"manager", "it", "it_lead", "admin"}:
+    if role not in {"it", "it_lead", "admin"}:
         where.append("user_id = ?")
         params.append(user_id)
     if status:
@@ -478,6 +516,22 @@ def list_tickets(user_id: str, role: str, status: str | None = None) -> list[dic
     return [_ticket_row(row) for row in rows]
 
 
+def get_ticket_by_id(ticket_id: int) -> dict | None:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, user_id, issue_type, priority, status, assigned_engineer, detail
+        FROM tickets
+        WHERE id = ?
+        """,
+        (ticket_id,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    return _ticket_row(row) if row else None
+
+
 def assign_ticket(ticket_id: int, engineer_id: str) -> str:
     conn = _get_conn()
     cur = conn.cursor()
@@ -491,6 +545,7 @@ def assign_ticket(ticket_id: int, engineer_id: str) -> str:
     )
     conn.commit()
     conn.close()
+    log_event(engineer_id, "ticket.assigned", f"ticket_id={ticket_id}")
     return "assigned"
 
 
@@ -507,6 +562,7 @@ def resolve_ticket(ticket_id: int, engineer_id: str) -> str:
     )
     conn.commit()
     conn.close()
+    log_event(engineer_id, "ticket.resolved", f"ticket_id={ticket_id}")
     return "resolved"
 
 
@@ -521,6 +577,7 @@ def request_asset(user_id: str, asset_type: str) -> AssetRequestResult:
     conn.commit()
     conn.close()
     approval_id = create_approval("asset", asset_id, approver_id="", approval_stage="manager_approval")
+    log_event(user_id, "asset.requested", f"asset_id={asset_id} asset_type={asset_type} approval_id={approval_id}")
     return AssetRequestResult(
         asset_id=asset_id,
         approval_id=approval_id,
@@ -532,7 +589,7 @@ def request_asset(user_id: str, asset_type: str) -> AssetRequestResult:
 def list_assets(user_id: str, role: str) -> list[dict]:
     conn = _get_conn()
     cur = conn.cursor()
-    if role in {"manager", "it", "it_lead", "admin"}:
+    if role in {"it", "it_lead", "admin"}:
         cur.execute("SELECT id, user_id, asset_type, status, approval_stage, fulfilled_by FROM assets ORDER BY id DESC")
     else:
         cur.execute(
@@ -610,6 +667,7 @@ def approve_request(approval_id: int, approver_id: str, status: str) -> None:
         )
     conn.commit()
     conn.close()
+    log_event(approver_id, "approval.action", f"approval_id={approval_id} status={status}")
 
 
 def update_asset_approval(
@@ -790,6 +848,7 @@ def update_asset_approval(
     _decrement_inventory(cur, asset_type, 1)
     conn.commit()
     conn.close()
+    log_event(fulfilled_by_value, "asset.fulfilled", f"asset_id={asset_id} asset_type={asset_type}")
     return AssetApprovalUpdate(
         asset_id=asset_id,
         approval_id=approval_id,
@@ -824,6 +883,7 @@ def update_leave_status(request_id: int, approver_id: str, status: str) -> None:
     )
     conn.commit()
     conn.close()
+    log_event(approver_id, "leave.approval.action", f"request_id={request_id} status={normalized_status}")
 
 
 def get_approval_status(request_type: str, request_id: int) -> str:
@@ -1038,7 +1098,7 @@ def _seed_default_users(cur: sqlite3.Cursor) -> None:
     now = _now()
     users = [
         ("emp001", "employee@company.com", "employee", "hr", "ChangeMe123!"),
-        ("mgr001", "manager@company.com", "manager", "operations", "ChangeMe123!"),
+        ("mgr001", "manager@company.com", "manager", "operations", "Manager123"),
         ("it001", "itlead@company.com", "it_lead", "it", "ChangeMe123!"),
     ]
     for user_id, email, role, department, plain_password in users:
@@ -1097,15 +1157,331 @@ def load_memory(user_id: str, limit: int = 10) -> list[str]:
     return [row[0] for row in rows]
 
 
-def log_event(user_id: str, event_type: str, detail: str) -> None:
+def get_user_by_id(user_id: str) -> dict | None:
     conn = _get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO logs (user_id, event_type, detail, created_at) VALUES (?, ?, ?, ?)",
-        (user_id, event_type, detail, _now()),
+        "SELECT user_id, email, role, department FROM users WHERE user_id = ? LIMIT 1",
+        (user_id,),
     )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {"user_id": row[0], "email": row[1], "role": row[2], "department": row[3]}
+
+
+def list_users() -> list[dict]:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, email, role, department, created_at FROM users ORDER BY id DESC")
+    rows = cur.fetchall()
+    conn.close()
+    return [
+        {"user_id": row[0], "email": row[1], "role": row[2], "department": row[3], "created_at": row[4]}
+        for row in rows
+    ]
+
+
+def set_user_role(user_id: str, role: str, department: str | None = None) -> str:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM users WHERE user_id = ?", (user_id,))
+    if not cur.fetchone():
+        conn.close()
+        return "not_found"
+    cur.execute("UPDATE users SET role = ?, department = ? WHERE user_id = ?", (role, department, user_id))
     conn.commit()
     conn.close()
+    return "updated"
+
+
+def list_pending_leave_approvals_for_manager(manager_user_id: str) -> list[dict]:
+    manager = get_user_by_id(manager_user_id)
+    department = (manager or {}).get("department")
+    conn = _get_conn()
+    cur = conn.cursor()
+    if department:
+        cur.execute(
+            """
+            SELECT a.id, a.request_id, a.status, a.approval_stage, a.created_at, l.user_id, l.leave_type, l.start_date, l.end_date, l.reason
+            FROM approvals a
+            JOIN leaves l ON l.id = a.request_id
+            JOIN users u ON u.user_id = l.user_id
+            WHERE a.request_type = 'leave'
+              AND a.status = 'pending'
+              AND COALESCE(a.approval_stage, '') = 'manager_approval'
+              AND u.department = ?
+            ORDER BY a.id DESC
+            """,
+            (department,),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            cur.execute(
+                """
+                SELECT a.id, a.request_id, a.status, a.approval_stage, a.created_at, l.user_id, l.leave_type, l.start_date, l.end_date, l.reason
+                FROM approvals a
+                JOIN leaves l ON l.id = a.request_id
+                WHERE a.request_type = 'leave'
+                  AND a.status = 'pending'
+                  AND COALESCE(a.approval_stage, '') = 'manager_approval'
+                ORDER BY a.id DESC
+                """
+            )
+            rows = cur.fetchall()
+    else:
+        cur.execute(
+            """
+            SELECT a.id, a.request_id, a.status, a.approval_stage, a.created_at, l.user_id, l.leave_type, l.start_date, l.end_date, l.reason
+            FROM approvals a
+            JOIN leaves l ON l.id = a.request_id
+            WHERE a.request_type = 'leave'
+              AND a.status = 'pending'
+              AND COALESCE(a.approval_stage, '') = 'manager_approval'
+            ORDER BY a.id DESC
+            """
+        )
+        rows = cur.fetchall()
+    conn.close()
+    return [
+        {
+            "approval_id": row[0],
+            "request_id": row[1],
+            "status": row[2],
+            "approval_stage": row[3] or "manager_approval",
+            "created_at": row[4],
+            "employee_id": row[5],
+            "leave_type": row[6],
+            "start_date": row[7],
+            "end_date": row[8],
+            "reason": row[9],
+        }
+        for row in rows
+    ]
+
+
+def list_pending_asset_approvals(stage: str) -> list[dict]:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT a.id, a.request_id, a.status, a.approval_stage, a.created_at, s.user_id, s.asset_type, s.status, s.approval_stage, s.fulfilled_by
+        FROM approvals a
+        JOIN assets s ON s.id = a.request_id
+        WHERE a.request_type = 'asset'
+          AND a.status = 'pending'
+          AND COALESCE(a.approval_stage, '') = ?
+        ORDER BY a.id DESC
+        """,
+        (stage,),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [
+        {
+            "approval_id": row[0],
+            "asset_id": row[1],
+            "status": row[2],
+            "approval_stage": row[3],
+            "created_at": row[4],
+            "requested_by": row[5],
+            "asset_type": row[6],
+            "asset_status": row[7],
+            "asset_stage": row[8],
+            "fulfilled_by": row[9],
+        }
+        for row in rows
+    ]
+
+
+def list_pending_ticket_approvals(stage: str) -> list[dict]:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT a.id, a.request_id, a.status, a.approval_stage, a.created_at, t.user_id, t.issue_type, t.priority, t.status, t.detail
+        FROM approvals a
+        JOIN tickets t ON t.id = a.request_id
+        WHERE a.request_type = 'ticket'
+          AND a.status = 'pending'
+          AND COALESCE(a.approval_stage, '') = ?
+        ORDER BY a.id DESC
+        """,
+        (stage,),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [
+        {
+            "approval_id": row[0],
+            "ticket_id": row[1],
+            "status": row[2],
+            "approval_stage": row[3],
+            "created_at": row[4],
+            "requested_by": row[5],
+            "issue_type": row[6],
+            "priority": row[7],
+            "ticket_status": row[8],
+            "detail": row[9],
+        }
+        for row in rows
+    ]
+
+
+def get_approval(approval_id: int) -> dict | None:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, request_type, request_id, status, approver_id, approval_stage, created_at
+        FROM approvals
+        WHERE id = ?
+        """,
+        (approval_id,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "request_type": row[1],
+        "request_id": row[2],
+        "status": row[3],
+        "approver_id": row[4],
+        "approval_stage": row[5] or "",
+        "created_at": row[6],
+    }
+
+
+def update_ticket_approval(
+    approval_id: int,
+    ticket_id: int,
+    approval_stage: str,
+    approver_id: str,
+    status: str,
+) -> TicketApprovalUpdate:
+    normalized_status = "approved" if status == "approved" else "rejected"
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT request_type, request_id, status, approver_id, approval_stage FROM approvals WHERE id = ?",
+        (approval_id,),
+    )
+    approval_row = cur.fetchone()
+    if not approval_row:
+        conn.close()
+        return TicketApprovalUpdate(ticket_id=ticket_id, approval_id=approval_id, status="invalid", approval_stage=approval_stage, next_stage=None, detail="approval_not_found")
+    request_type, request_id, approval_status, existing_approver, stored_stage = approval_row
+    if request_type != "ticket" or request_id != ticket_id:
+        conn.close()
+        return TicketApprovalUpdate(ticket_id=ticket_id, approval_id=approval_id, status="invalid", approval_stage=approval_stage, next_stage=None, detail="approval_ticket_mismatch")
+    if approval_status != "pending":
+        conn.close()
+        return TicketApprovalUpdate(ticket_id=ticket_id, approval_id=approval_id, status=approval_status, approval_stage=approval_stage, next_stage=None, detail="approval_not_pending")
+    if stored_stage and stored_stage != approval_stage:
+        conn.close()
+        return TicketApprovalUpdate(ticket_id=ticket_id, approval_id=approval_id, status="invalid", approval_stage=approval_stage, next_stage=None, detail="approval_stage_mismatch")
+    if existing_approver and existing_approver != approver_id:
+        conn.close()
+        return TicketApprovalUpdate(ticket_id=ticket_id, approval_id=approval_id, status="invalid", approval_stage=approval_stage, next_stage=None, detail="approval_already_actioned")
+    cur.execute("SELECT status FROM tickets WHERE id = ?", (ticket_id,))
+    if not cur.fetchone():
+        conn.close()
+        return TicketApprovalUpdate(ticket_id=ticket_id, approval_id=approval_id, status="invalid", approval_stage=approval_stage, next_stage=None, detail="ticket_not_found")
+    cur.execute(
+        "UPDATE approvals SET status = ?, approver_id = ? WHERE id = ?",
+        (normalized_status, approver_id, approval_id),
+    )
+    if normalized_status == "rejected":
+        cur.execute("UPDATE tickets SET status = 'rejected' WHERE id = ?", (ticket_id,))
+        conn.commit()
+        conn.close()
+        return TicketApprovalUpdate(ticket_id=ticket_id, approval_id=approval_id, status="rejected", approval_stage=approval_stage, next_stage=None, detail="rejected")
+    if approval_stage == "manager_approval":
+        cur.execute("UPDATE tickets SET status = 'pending_it_lead_approval' WHERE id = ?", (ticket_id,))
+        conn.commit()
+        conn.close()
+        next_approval_id = create_approval("ticket", ticket_id, approver_id="", approval_stage="it_lead_approval")
+        return TicketApprovalUpdate(ticket_id=ticket_id, approval_id=approval_id, status="approved", approval_stage=approval_stage, next_stage="it_lead_approval", next_approval_id=next_approval_id, detail="pending_it_lead_approval")
+    cur.execute("UPDATE tickets SET status = 'open' WHERE id = ?", (ticket_id,))
+    conn.commit()
+    conn.close()
+    return TicketApprovalUpdate(ticket_id=ticket_id, approval_id=approval_id, status="approved", approval_stage=approval_stage, next_stage=None, detail="approved_open")
+
+
+def list_approval_history(limit: int = 200, request_type: str | None = None, user_id: str | None = None) -> list[dict]:
+    conn = _get_conn()
+    cur = conn.cursor()
+    where: list[str] = []
+    params: list[object] = []
+    if request_type:
+        where.append("a.request_type = ?")
+        params.append(request_type)
+
+    join = ""
+    if user_id:
+        join = "LEFT JOIN leaves l ON (l.id = a.request_id AND a.request_type = 'leave') LEFT JOIN assets s ON (s.id = a.request_id AND a.request_type = 'asset')"
+        where.append("((a.request_type='leave' AND l.user_id=?) OR (a.request_type='asset' AND s.user_id=?))")
+        params.extend([user_id, user_id])
+
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    query = f"""
+        SELECT a.id, a.request_type, a.request_id, a.status, a.approver_id, a.approval_stage, a.created_at
+        FROM approvals a
+        {join}
+        {clause}
+        ORDER BY a.id DESC
+        LIMIT ?
+    """
+    params.append(limit)
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    conn.close()
+    return [
+        {
+            "approval_id": row[0],
+            "request_type": row[1],
+            "request_id": row[2],
+            "status": row[3],
+            "approver_id": row[4],
+            "approval_stage": row[5] or "",
+            "created_at": row[6],
+        }
+        for row in rows
+    ]
+
+
+def list_audit_logs(limit: int = 200) -> list[dict]:
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, user_id, event_type, detail, created_at FROM logs ORDER BY id DESC LIMIT ?", (limit,))
+    rows = cur.fetchall()
+    conn.close()
+    return [{"id": row[0], "user_id": row[1], "event_type": row[2], "detail": row[3], "created_at": row[4]} for row in rows]
+
+
+def log_event(user_id: str, event_type: str, detail: str) -> None:
+    import time
+    for attempt in range(6):
+        conn = None
+        try:
+            conn = _get_conn()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO logs (user_id, event_type, detail, created_at) VALUES (?, ?, ?, ?)",
+                (user_id, event_type, detail, _now()),
+            )
+            conn.commit()
+            conn.close()
+            return
+        except sqlite3.OperationalError as exc:
+            if conn:
+                conn.close()
+            if "locked" not in str(exc).lower() or attempt == 5:
+                return
+            time.sleep(0.1 * (attempt + 1))
 
 
 def _now() -> str:

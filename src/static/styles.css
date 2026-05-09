@@ -274,6 +274,85 @@ body {
   box-shadow: var(--shadow-soft);
 }
 
+.role-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.role-menu-item {
+  border: 1px solid var(--stroke-medium);
+  background: var(--glass-strong);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.role-menu-item.active {
+  border-color: rgba(216, 102, 31, 0.35);
+  color: var(--ink);
+}
+
+.role-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.role-view-muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.role-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--stroke-soft);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.role-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.role-table th,
+.role-table td {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--stroke-soft);
+}
+
+.role-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.role-form-grid input {
+  border: 1px solid var(--stroke-medium);
+  background: rgba(255, 255, 255, 0.75);
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.mini-btn {
+  border: 1px solid var(--stroke-medium);
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 4px 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.mini-btn.success { border-color: rgba(46, 125, 50, 0.3); }
+.mini-btn.danger { border-color: rgba(198, 40, 40, 0.3); }
+
 /* Side Context Panel */
 .side-context {
   width: 320px;
@@ -294,6 +373,70 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.workspace-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tiny-btn {
+  border: 1px solid var(--stroke-medium);
+  background: var(--glass-strong);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tiny-btn:hover {
+  color: var(--ink);
+  border-color: rgba(216, 102, 31, 0.35);
+}
+
+.tiny-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tiny-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.kpi-pill {
+  border: 1px solid var(--stroke-soft);
+  border-radius: 12px;
+  padding: 8px;
+  background: var(--glass-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kpi-pill span {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.kpi-pill strong {
+  font-size: 13px;
+  color: var(--ink);
 }
 
 .workspace-identity h1 {
@@ -419,6 +562,7 @@ body {
 
 .context-card:hover {
   transform: translateY(-2px);
+  box-shadow: 0 16px 28px rgba(43, 33, 27, 0.08);
 }
 
 .context-card-title {
@@ -753,6 +897,10 @@ body {
   color: var(--bg-color);
 }
 
+.bubble-action:active {
+  transform: translateY(1px);
+}
+
 @keyframes floatUp {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }
@@ -765,3 +913,63 @@ body {
 .status-badge.open { color: #1565c0; }
 .status-badge.assigned { color: var(--accent); }
 .status-badge.resolved { color: #2e7d32; }
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,0.55) 40%, transparent 60%);
+  animation: shimmer 1.2s infinite;
+}
+
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,0.55) 40%, transparent 60%);
+  animation: shimmer 1.2s infinite;
+}
+
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.app-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  background: var(--ink);
+  color: var(--bg-color);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 12px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: all 0.2s ease;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.app-toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.app-toast.success {
+  background: #2e7d32;
+}
+
+.app-toast.error {
+  background: #b3261e;
+}

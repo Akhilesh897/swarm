@@ -73,6 +73,103 @@ class ITApprovalResponse(BaseModel):
     detail: str | None = None
 
 
+class TicketCreateRequest(BaseModel):
+    issue_type: str
+    priority: str = "medium"
+    detail: str = ""
+
+
+class TicketAssignRequest(BaseModel):
+    ticket_id: int
+    engineer_id: str
+
+
+class TicketResolveRequest(BaseModel):
+    ticket_id: int
+
+
+class LeaveApplyRequest(BaseModel):
+    start_date: str
+    end_date: str
+    leave_type: str = "general"
+    reason: str = ""
+
+
+class LeaveCancelRequest(BaseModel):
+    request_id: int
+
+
+class ApprovalActionRequest(BaseModel):
+    approval_id: int
+    action: str
+
+
+class AssetRequestCreate(BaseModel):
+    asset_type: str
+
+
+class TicketCreateRequest(BaseModel):
+    issue_type: str
+    priority: str = "medium"
+    detail: str = ""
+
+
+class TicketAssignRequest(BaseModel):
+    ticket_id: int
+    engineer_id: str
+
+
+class TicketResolveRequest(BaseModel):
+    ticket_id: int
+
+
+class LeaveApplyRequest(BaseModel):
+    start_date: str
+    end_date: str
+    leave_type: str = "general"
+    reason: str = ""
+
+
+class LeaveCancelRequest(BaseModel):
+    request_id: int
+
+
+class ApprovalActionRequest(BaseModel):
+    approval_id: int
+    action: str
+
+
+class TicketCreateRequest(BaseModel):
+    issue_type: str
+    priority: str = "medium"
+    detail: str = ""
+
+
+class TicketAssignRequest(BaseModel):
+    ticket_id: int
+    engineer_id: str
+
+
+class TicketResolveRequest(BaseModel):
+    ticket_id: int
+
+
+class LeaveApplyRequest(BaseModel):
+    start_date: str
+    end_date: str
+    leave_type: str = "general"
+    reason: str = ""
+
+
+class LeaveCancelRequest(BaseModel):
+    request_id: int
+
+
+class ApprovalActionRequest(BaseModel):
+    approval_id: int
+    action: str
+
+
 def _normalize_role(role: str) -> str:
     normalized = role.strip().lower()
     if normalized == "it":
@@ -276,6 +373,343 @@ def create_app() -> FastAPI:
     def get_context_assets(current_user: AuthUser = Depends(require_current_user)):
         role = _normalize_role(current_user.role)
         return sql.list_assets(current_user.user_id, role)
+
+    ROLE_EMPLOYEE = "employee"
+    ROLE_MANAGER = "manager"
+    ROLE_IT_LEAD = "it_lead"
+    ROLE_ADMIN = "admin"
+    EMPLOYEE_PLUS = {ROLE_EMPLOYEE, ROLE_MANAGER, ROLE_IT_LEAD, ROLE_ADMIN}
+
+    def _require_roles(current_user: AuthUser, allowed: set[str]) -> None:
+        role = _normalize_role(current_user.role)
+        if role not in allowed:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+    def _notify_power_automate(url: str | None, payload: dict) -> None:
+        if not url:
+            return
+        try:
+            import httpx
+            httpx.post(url, json=payload, timeout=10)
+        except Exception:
+            return
+
+    @app.get("/tickets/my")
+    def tickets_my(current_user: AuthUser = Depends(require_current_user)) -> list[dict]:
+        return sql.list_tickets(current_user.user_id, role="employee")
+
+    @app.get("/tickets/all")
+    def tickets_all(current_user: AuthUser = Depends(require_current_user)) -> list[dict]:
+        _require_roles(current_user, {"it_lead", "admin"})
+        return sql.list_tickets(current_user.user_id, role=_normalize_role(current_user.role))
+
+    @app.post("/tickets/create")
+    def tickets_create(req: TicketCreateRequest, current_user: AuthUser = Depends(require_current_user)) -> dict:
+        _require_roles(current_user, EMPLOYEE_PLUS)
+        result = sql.create_it_ticket_with_checks(
+            current_user.user_id,
+            issue_type=req.issue_type,
+            priority=req.priority,
+            detail=req.detail,
+        )
+        if result.status == "created" and result.ticket_id and result.approval_id:
+            from src.core.notifications import build_approval_notification_payload
+            payload = build_approval_notification_payload(
+                event="approval_pending",
+                entity_type="it_ticket",
+                entity_id=result.ticket_id,
+                approval_id=result.approval_id,
+                approval_stage=result.approval_stage or "manager_approval",
+                approval_status="pending",
+                requested_by_user_id=current_user.user_id,
+                requested_by_email=current_user.email,
+                requested_by_name=current_user.name,
+                approver_role="manager",
+                approver_email=get_config().manager_email,
+                request_details={
+                    "ticket_issue_type": req.issue_type,
+                    "priority": req.priority,
+                    "description": req.detail,
+                }
+            )
+            _notify_power_automate(
+                get_config().power_automate_url,
+                payload,
+            )
+        return {
+            "status": result.status,
+            "detail": result.detail,
+            "ticket_id": result.ticket_id,
+            "approval_id": result.approval_id,
+            "approval_stage": result.approval_stage,
+        }
+
+    @app.post("/tickets/assign")
+    def tickets_assign(req: TicketAssignRequest, current_user: AuthUser = Depends(require_current_user)) -> dict:
+        _require_roles(current_user, {"it_lead", "admin"})
+        return {"status": sql.assign_ticket(req.ticket_id, req.engineer_id)}
+
+    @app.post("/tickets/resolve")
+    def tickets_resolve(req: TicketResolveRequest, current_user: AuthUser = Depends(require_current_user)) -> dict:
+        _require_roles(current_user, {"it_lead", "admin"})
+        return {"status": sql.resolve_ticket(req.ticket_id, current_user.user_id)}
+
+    @app.get("/inventory")
+    def inventory(current_user: AuthUser = Depends(require_current_user)) -> list[dict]:
+        _require_roles(current_user, {"it_lead", "admin"})
+        return sql.get_inventory()
+
+    @app.post("/assets/request")
+    def assets_request(req: AssetRequestCreate, current_user: AuthUser = Depends(require_current_user)) -> dict:
+        _require_roles(current_user, EMPLOYEE_PLUS)
+        result = sql.request_asset(current_user.user_id, req.asset_type.strip().lower())
+        _notify_power_automate(
+            get_config().power_automate_it_url,
+            {
+                "event": "asset_request_created",
+                "employee_id": current_user.user_id,
+                "asset_type": req.asset_type.strip().lower(),
+                "approver_email": get_config().manager_email,
+            },
+        )
+        return {
+            "asset_id": result.asset_id,
+            "approval_id": result.approval_id,
+            "status": result.status,
+            "approval_stage": result.approval_stage,
+        }
+
+    @app.get("/assets/my")
+    def assets_my(current_user: AuthUser = Depends(require_current_user)) -> list[dict]:
+        return sql.list_assets(current_user.user_id, role=ROLE_EMPLOYEE)
+
+    @app.get("/leave/my")
+    def leave_my(current_user: AuthUser = Depends(require_current_user)) -> dict:
+        return {"balance": sql.get_leave_balance(current_user.user_id), "history": sql.list_leaves(current_user.user_id)}
+
+    @app.get("/leave/pending")
+    def leave_pending(current_user: AuthUser = Depends(require_current_user)) -> list[dict]:
+        _require_roles(current_user, {"manager", "admin"})
+        return sql.list_pending_leave_approvals_for_manager(current_user.user_id)
+
+    @app.post("/leave/apply")
+    def leave_apply(req: LeaveApplyRequest, current_user: AuthUser = Depends(require_current_user)) -> dict:
+        _require_roles(current_user, EMPLOYEE_PLUS)
+        result = sql.apply_leave(
+            current_user.user_id,
+            start_date=req.start_date,
+            end_date=req.end_date,
+            reason=req.reason,
+            leave_type=req.leave_type,
+        )
+        if result.approval_required:
+            from src.core.notifications import build_approval_notification_payload
+            payload = build_approval_notification_payload(
+                event="approval_pending",
+                entity_type="leave_request",
+                entity_id=result.request_id,
+                approval_id=result.approval_id,
+                approval_stage="manager_approval",
+                approval_status="pending",
+                requested_by_user_id=current_user.user_id,
+                requested_by_email=current_user.email,
+                requested_by_name=current_user.name,
+                approver_role="manager",
+                approver_email=get_config().manager_email,
+                request_details={
+                    "leave_type": req.leave_type,
+                    "start_date": req.start_date,
+                    "end_date": req.end_date,
+                    "priority": "medium"
+                }
+            )
+            _notify_power_automate(
+                get_config().power_automate_url,
+                payload,
+            )
+        return {"request_id": result.request_id, "status": result.status, "approval_required": result.approval_required, "detail": result.detail}
+
+    @app.post("/leave/cancel")
+    def leave_cancel(req: LeaveCancelRequest, current_user: AuthUser = Depends(require_current_user)) -> dict:
+        _require_roles(current_user, EMPLOYEE_PLUS)
+        status_value = sql.cancel_leave(current_user.user_id, req.request_id)
+        if status_value == "canceled":
+            _notify_power_automate(
+                get_config().power_automate_email_url,
+                {
+                    "event": "leave_request_canceled",
+                    "employee_id": current_user.user_id,
+                    "request_id": str(req.request_id),
+                    "approver_email": get_config().manager_email,
+                },
+            )
+        return {"status": status_value}
+
+    @app.get("/approvals/pending")
+    def approvals_pending(current_user: AuthUser = Depends(require_current_user)) -> dict:
+        role = _normalize_role(current_user.role)
+        if role == "manager":
+            return {
+                "leave": sql.list_pending_leave_approvals_for_manager(current_user.user_id),
+                "asset": sql.list_pending_asset_approvals("manager_approval"),
+                "ticket": sql.list_pending_ticket_approvals("manager_approval"),
+            }
+        if role == "it_lead":
+            return {"leave": [], "asset": sql.list_pending_asset_approvals("it_lead_approval"), "ticket": sql.list_pending_ticket_approvals("it_lead_approval")}
+        if role == "admin":
+            all_history = sql.list_approval_history(limit=500)
+            return {"pending": [row for row in all_history if row.get("status") == "pending"]}
+        return {"leave": [], "asset": [], "ticket": []}
+
+    @app.get("/approvals/history")
+    def approvals_history(current_user: AuthUser = Depends(require_current_user)) -> list[dict]:
+        role = _normalize_role(current_user.role)
+        if role == ROLE_ADMIN:
+            return sql.list_approval_history(limit=500)
+        if role == ROLE_MANAGER:
+            # Manager history includes leave approvals + manager-stage asset pipeline visibility.
+            return sql.list_approval_history(limit=300)
+        if role == ROLE_IT_LEAD:
+            return sql.list_approval_history(limit=300, request_type="asset")
+        return sql.list_approval_history(limit=200, user_id=current_user.user_id)
+
+    @app.post("/approvals/action")
+    def approvals_action(req: ApprovalActionRequest, current_user: AuthUser = Depends(require_current_user)) -> dict:
+        action = req.action.strip().lower()
+        if action not in {"approve", "approved", "reject", "rejected"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported action")
+        normalized = "approved" if action.startswith("approve") else "rejected"
+
+        approval = sql.get_approval(req.approval_id)
+        if not approval:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval not found")
+        if approval["status"] != "pending":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Approval is not pending")
+
+        role = _normalize_role(current_user.role)
+        stage = (approval.get("approval_stage") or "").strip() or ("manager_approval" if approval["request_type"] == "leave" else "")
+        if role != "admin":
+            if stage == "manager_approval" and role != "manager":
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+            if stage == "it_lead_approval" and role != "it_lead":
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+        if approval["request_type"] == "leave":
+            sql.update_leave_status(approval["request_id"], current_user.user_id, normalized)
+            return {"status": "ok", "request_type": "leave", "request_id": approval["request_id"]}
+
+        if approval["request_type"] == "asset":
+            import sqlite3
+            import time
+
+            result = None
+            for attempt in range(6):
+                try:
+                    result = sql.update_asset_approval(
+                        approval_id=approval["id"],
+                        asset_id=approval["request_id"],
+                        approval_stage=stage,
+                        approver_id=current_user.user_id,
+                        status=normalized,
+                    )
+                    break
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc).lower() or attempt == 5:
+                        raise
+                    time.sleep(0.1 * (attempt + 1))
+
+            sql.log_event(
+                current_user.user_id,
+                "asset.approval.action",
+                f"approval_id={approval['id']} asset_id={approval['request_id']} stage={stage} status={normalized}",
+            )
+            if stage == "manager_approval" and normalized == "approved" and result.next_stage == "it_lead_approval":
+                _notify_power_automate(
+                    get_config().power_automate_it_url,
+                    {
+                        "event": "asset_request_ready_for_it_approval",
+                        "asset_id": str(result.asset_id),
+                    },
+                )
+            return {
+                "status": "ok",
+                "request_type": "asset",
+                "asset_id": result.asset_id,
+                "approval_id": result.approval_id,
+                "approval_stage": result.approval_stage,
+                "next_stage": result.next_stage,
+                "next_approval_id": result.next_approval_id,
+                "detail": result.detail,
+            }
+
+        if approval["request_type"] == "ticket":
+            result = sql.update_ticket_approval(
+                approval_id=approval["id"],
+                ticket_id=approval["request_id"],
+                approval_stage=stage,
+                approver_id=current_user.user_id,
+                status=normalized,
+            )
+            if result.detail in {
+                "approval_not_found",
+                "approval_ticket_mismatch",
+                "approval_not_pending",
+                "approval_stage_mismatch",
+                "approval_already_actioned",
+                "ticket_not_found",
+            }:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=result.detail)
+            if stage == "manager_approval" and normalized == "approved" and result.next_stage == "it_lead_approval" and result.next_approval_id:
+                from src.core.notifications import build_approval_notification_payload
+                payload = build_approval_notification_payload(
+                    event="approval_pending",
+                    entity_type="it_ticket",
+                    entity_id=result.ticket_id,
+                    approval_id=result.next_approval_id,
+                    approval_stage="it_lead_approval",
+                    approval_status="pending",
+                    requested_by_user_id=approval.get("approver_id") or "",
+                    approver_role="it_lead",
+                    approver_email=get_config().manager_email,
+                )
+                _notify_power_automate(
+                    get_config().power_automate_url,
+                    payload,
+                )
+            return {
+                "status": "ok",
+                "request_type": "ticket",
+                "ticket_id": result.ticket_id,
+                "approval_id": result.approval_id,
+                "approval_stage": result.approval_stage,
+                "next_stage": result.next_stage,
+                "next_approval_id": result.next_approval_id,
+                "detail": result.detail,
+            }
+
+        sql.approve_request(approval["id"], current_user.user_id, normalized)
+        return {"status": "ok", "request_type": approval["request_type"], "request_id": approval["request_id"]}
+
+    @app.get("/admin/users")
+    def admin_users(current_user: AuthUser = Depends(require_current_user)) -> list[dict]:
+        _require_roles(current_user, {"admin"})
+        return sql.list_users()
+
+    @app.post("/admin/users/role")
+    def admin_set_role(
+        user_id: str,
+        role: str,
+        department: str | None = None,
+        current_user: AuthUser = Depends(require_current_user),
+    ) -> dict:
+        _require_roles(current_user, {"admin"})
+        status_value = sql.set_user_role(user_id, _normalize_role(role), department)
+        return {"status": status_value}
+
+    @app.get("/admin/audit-logs")
+    def admin_audit_logs(current_user: AuthUser = Depends(require_current_user)) -> list[dict]:
+        _require_roles(current_user, {"admin"})
+        return sql.list_audit_logs(limit=300)
 
     return app
 

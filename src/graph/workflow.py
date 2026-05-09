@@ -123,6 +123,14 @@ def _normalize_intent_query(query: str) -> str:
         "polcy": "policy",
         "maternal": "maternity",
         "wfh": "work from home",
+        "aplly": "apply",
+        "aply": "apply",
+        "lev": "leave",
+        "leev": "leave",
+        "cancle": "cancel",
+        "tomorw": "tomorrow",
+        "balnce": "balance",
+        "req ": "request ",
     }
     for key, value in replacements.items():
         lowered = lowered.replace(key, value)

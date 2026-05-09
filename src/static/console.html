@@ -42,6 +42,15 @@
             <div class="status-pulse"></div>
             <span id="apiStatus">Checking...</span>
           </div>
+          <div class="workspace-controls">
+            <button class="tiny-btn" id="refreshContextBtn" type="button">Refresh</button>
+            <label class="tiny-toggle">
+              <input id="autoRefreshToggle" type="checkbox" checked />
+              <span>Auto</span>
+            </label>
+            <span class="tiny-meta" id="lastSync">--</span>
+          </div>
+          <div class="kpi-strip" id="kpiStrip"></div>
         </div>
 
         <div class="context-scroll">
@@ -61,6 +70,12 @@
                 </select>
               </label>
             </form>
+          </div>
+
+          <div class="context-group">
+            <h2>Dashboard</h2>
+            <div id="roleMenu" class="role-menu"></div>
+            <div id="roleView" class="role-view">Loading...</div>
           </div>
 
           <div class="context-group">
@@ -106,6 +121,7 @@
       </main>
 
     </div>
+    <div id="appToast" class="app-toast" aria-live="polite"></div>
     <script src="/static/console.js"></script>
   </body>
 </html>

@@ -38,13 +38,13 @@ def generate_final_response(query: str, backend_result: str, session_id: str) ->
     
     prompt = f"{memory_str}\n"
     
-    # Check if the result looks like RAG context or a backend result
+    prompt += f"USER QUERY:\n{query}\n\n"
     if "[1]" in backend_result or "source:" in backend_result:
         prompt += f"RETRIEVED CONTEXT:\n{backend_result}\n\n"
+        prompt += "Please provide a natural, conversational response based ONLY on the context above."
     else:
-        prompt += f"BACKEND ACTION RESULT:\n{backend_result}\n\n"
-        
-    prompt += f"USER QUERY:\n{query}\n\nPlease provide a natural, conversational response based ONLY on the context/result above."
+        prompt += f"RESULT OF EXECUTING BACKEND ACTION FOR THIS QUERY:\n{backend_result}\n\n"
+        prompt += "Please provide a natural, conversational response based ONLY on the result above. The action has ALREADY been performed, explain the result to the user gently."
 
     logging.info(f"[STM INJECTION] Included {len(recent_context)} previous turns.")
     logging.info(f"[PROMPT ASSEMBLY] Generating final response.")
@@ -86,16 +86,20 @@ def _should_return_backend_result(query: str, backend_result: str) -> bool:
     if needs_more_information:
         return True
 
-    deterministic_action_result = normalized_result.startswith(
-        (
-            "leave request ",
-            "approval status ",
-            "pending leave requests:",
-            "no pending leave requests",
-            "your leave balance ",
-        )
+    operational_it_response = (
+        "did this resolve your issue, or would you like me to raise an it ticket?" in normalized_result
+        or "would you like me to create an asset request for this?" in normalized_result
+        or "raise an it support ticket" in normalized_result and "create a new asset request" in normalized_result
+        or "i can raise a ticket, but i need the issue type first" in normalized_result
+        or "could you describe the issue a bit more?" in normalized_result
+        or "it request received. provide details for ticket or asset needs." in normalized_result
+        or "please share a bit more detail so i can guide the right path." in normalized_result
+        or "no ticket is confirmed yet" in normalized_result
+        or "i could not confirm ticket creation in the system" in normalized_result
+        or normalized_result.startswith("please try:")
+        or "\nplease try:\n" in normalized_result
     )
-    if deterministic_action_result:
+    if operational_it_response:
         return True
 
     ambiguous_confirmation = normalized_query in {

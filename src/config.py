@@ -12,8 +12,7 @@ class AppConfig:
     app_name: str
     app_env: str
   
-    power_automate_email_url: str
-    power_automate_it_url: str
+    power_automate_url: str
     manager_email: str
     app_db_path: str
     vector_db_path: str
@@ -35,6 +34,8 @@ class AppConfig:
     gemini_model: str
     jwt_secret: str
     pa_callback_secret: str
+    langchain_api_key: str
+    langchain_project: str
     inventory_min_stock: int
     company_email_domain: str
     admin_email_roles: dict[str, str]
@@ -69,8 +70,7 @@ def get_config() -> AppConfig:
         app_env=os.getenv("APP_ENV", "dev"),
     
      
-        power_automate_email_url=os.getenv("POWER_AUTOMATE_EMAIL_URL", ""),
-        power_automate_it_url=os.getenv("POWER_AUTOMATE_IT_URL", ""),
+        power_automate_url=os.getenv("POWER_AUTOMATE_URL", ""),
         manager_email=os.getenv("MANAGER_EMAIL", ""),
         app_db_path=os.getenv("APP_DB_PATH", "./data/app.db"),
         vector_db_path=os.getenv("VECTOR_DB_PATH", "./data/vector_db"),
@@ -95,6 +95,8 @@ def get_config() -> AppConfig:
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
         jwt_secret=os.getenv("JWT_SECRET", "replace_me"),
         pa_callback_secret=os.getenv("PA_CALLBACK_SECRET", ""),
+        langchain_api_key=os.getenv("LANGCHAIN_API_KEY", ""),
+        langchain_project=os.getenv("LANGCHAIN_PROJECT", "enterprise-copilot"),
         inventory_min_stock=int(os.getenv("INVENTORY_MIN_STOCK", "1")),
         company_email_domain=os.getenv("COMPANY_EMAIL_DOMAIN", "company.com").strip().lower(),
         admin_email_roles=admin_email_roles,

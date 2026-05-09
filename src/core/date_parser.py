@@ -45,6 +45,18 @@ def parse_dates(query: str) -> list[str]:
     if len(dates) == 1:
         return [dates[0], dates[0]]
 
+    # 2. Look for DD/MM/YYYY or DD-MM-YYYY (common in enterprise chat)
+    slash_dates = re.findall(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b", query)
+    if len(slash_dates) >= 2:
+        start = _safe_date(int(slash_dates[0][2]), int(slash_dates[0][1]), int(slash_dates[0][0]))
+        end = _safe_date(int(slash_dates[1][2]), int(slash_dates[1][1]), int(slash_dates[1][0]))
+        if start and end:
+            return [start.isoformat(), end.isoformat()]
+    if len(slash_dates) == 1:
+        parsed = _safe_date(int(slash_dates[0][2]), int(slash_dates[0][1]), int(slash_dates[0][0]))
+        if parsed:
+            return [parsed.isoformat(), parsed.isoformat()]
+
     natural_dates = _parse_natural_date_range(query, today)
     if natural_dates:
         logging.info(f"[DATE NORMALIZATION] Normalized natural range to: {natural_dates[0]} to {natural_dates[1]}")
@@ -67,9 +79,26 @@ def parse_dates(query: str) -> list[str]:
         days_ahead = 7 - today.weekday()
         start_date = today + timedelta(days=days_ahead)
         end_date = start_date + timedelta(days=4)
+    elif "this week" in lowered or "entire week" in lowered:
+        # Remaining current work week to avoid past-date rejection.
+        start_date = today
+        end_date = today + timedelta(days=max(0, 4 - today.weekday()))
     elif "next monday" in lowered:
         days_ahead = 7 - today.weekday()
         start_date = today + timedelta(days=days_ahead)
+        end_date = start_date
+    elif "coming monday" in lowered:
+        days_ahead = (0 - today.weekday()) % 7
+        if days_ahead == 0:
+            days_ahead = 7
+        start_date = today + timedelta(days=days_ahead)
+        end_date = start_date
+    elif "next tuesday and wednesday" in lowered or "next tuesday to wednesday" in lowered:
+        tuesday = _next_weekday(today, 1)
+        start_date = tuesday
+        end_date = tuesday + timedelta(days=1)
+    elif "tomorrow evening" in lowered:
+        start_date = today + timedelta(days=1)
         end_date = start_date
     elif "next friday" in lowered:
         days_ahead = 4 - today.weekday()
@@ -77,6 +106,18 @@ def parse_dates(query: str) -> list[str]:
             days_ahead += 7
         start_date = today + timedelta(days=days_ahead)
         end_date = start_date
+    elif "this friday" in lowered:
+        days_ahead = 4 - today.weekday()
+        if days_ahead < 0:
+            days_ahead += 7
+        start_date = today + timedelta(days=days_ahead)
+        end_date = start_date
+    elif "till friday" in lowered or "until friday" in lowered:
+        days_ahead = 4 - today.weekday()
+        if days_ahead < 0:
+            days_ahead += 7
+        start_date = today
+        end_date = today + timedelta(days=days_ahead)
     
     if start_date and end_date:
         logging.info(f"[DATE NORMALIZATION] Normalized to: {start_date.isoformat()} to {end_date.isoformat()}")
@@ -195,18 +236,27 @@ def _build_date_range(
     end_month: int,
     end_year: int | None,
 ) -> tuple[datetime.date, datetime.date] | None:
-    resolved_start_year = start_year or today.year
+    if start_year:
+        resolved_start_year = start_year
+    else:
+        temp_start = _safe_date(today.year, start_month, start_day)
+        resolved_start_year = today.year + 1 if temp_start and temp_start < today else today.year
+
     start = _safe_date(resolved_start_year, start_month, start_day)
     if not start:
         return None
 
-    resolved_end_year = end_year or start.year
+    if end_year:
+        resolved_end_year = end_year
+    else:
+        temp_end = _safe_date(start.year, end_month, end_day)
+        resolved_end_year = start.year + 1 if temp_end and temp_end < start else start.year
+
     end = _safe_date(resolved_end_year, end_month, end_day)
     if not end:
         return None
-    if end < start and not end_year:
-        end = _safe_date(start.year + 1, end_month, end_day)
-    return (start, end) if end else None
+
+    return (start, end)
 
 
 def _resolve_year(today: datetime.date, month: int, day: int, explicit_year: str | None) -> int:
@@ -224,3 +274,10 @@ def _safe_date(year: int, month: int, day: int) -> datetime.date | None:
         return datetime.date(year, month, day)
     except ValueError:
         return None
+
+
+def _next_weekday(base: datetime.date, weekday: int) -> datetime.date:
+    days_ahead = (weekday - base.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    return base + timedelta(days=days_ahead)

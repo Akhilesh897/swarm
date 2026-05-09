@@ -11,6 +11,8 @@ __pycache__/
 
 # db
 *.db
+*.db-shm
+*.db-wal
 
 # vector db
 data/vector_db/
@@ -20,5 +22,9 @@ data/vector_db/
 
 # temp/test
 tmp_*.py
-patch_*.py
+patch*.py
 test_*.py
+temp_*.txt
+
+# pytest cache
+.pytest_cache/
