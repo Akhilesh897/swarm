@@ -28,6 +28,7 @@ class ChatRequest(BaseModel):
     query: str
     session_id: str
     model_preference: str | None = None
+    stream: bool = False
 
 
 class LoginRequest(BaseModel):
@@ -206,11 +207,17 @@ def create_app() -> FastAPI:
     app = FastAPI(title=get_config().app_name)
     app.include_router(tools_router)
 
-    config = get_config()
-    try:
-        ingest_folder(config.hr_docs_path, role="general")
-    except Exception:
-        pass
+    @app.on_event("startup")
+    def startup_event():
+        import threading
+        def _bg_ingest():
+            config = get_config()
+            try:
+                ingest_folder(config.hr_docs_path, role="general")
+            except Exception as e:
+                import logging
+                logging.error(f"Background ingest failed: {e}")
+        threading.Thread(target=_bg_ingest, daemon=True).start()
 
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -247,17 +254,58 @@ def create_app() -> FastAPI:
     def chat_page() -> FileResponse:
         return FileResponse(static_dir / "console.html")
 
-    @app.post("/chat", response_model=ChatResponse)
-    def chat(req: ChatRequest, current_user: AuthUser = Depends(require_current_user)) -> ChatResponse:
+    @app.post("/chat")
+    def chat(req: ChatRequest, current_user: AuthUser = Depends(require_current_user)):
         user_id, role = _resolve_identity(req, current_user)
         try:
-            result = run_graph(
-                user_id=user_id,
-                role=role,
-                query=req.query,
-                session_id=req.session_id,
-                model_preference=req.model_preference,
-            )
+            from fastapi.responses import StreamingResponse
+            import json
+            
+            if req.stream:
+                from src.graph.workflow import finalize_streaming_memory
+                from src.core.generator import generate_final_response
+                result = run_graph(
+                    user_id=user_id,
+                    role=role,
+                    query=req.query,
+                    session_id=req.session_id,
+                    model_preference=req.model_preference,
+                    skip_synthesis=True
+                )
+                
+                if result.get("response") == "Access denied for this request.":
+                    def direct_gen():
+                        yield f"data: {json.dumps({'chunk': 'Access denied for this request.'})}\n\n"
+                        yield f"data: {json.dumps({'trace_id': result['trace_id'], 'approval_required': False, 'done': True})}\n\n"
+                    return StreamingResponse(direct_gen(), media_type="text/event-stream")
+
+                generator = generate_final_response(req.query, result.get("response", ""), req.session_id, result, stream=True)
+                
+                def event_stream():
+                    full_text = []
+                    for chunk in generator:
+                        full_text.append(chunk)
+                        yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                    
+                    final_str = "".join(full_text)
+                    finalize_streaming_memory(result, final_str)
+                    
+                    yield f"data: {json.dumps({'trace_id': result['trace_id'], 'approval_required': result['approval_required'], 'done': True})}\n\n"
+                
+                return StreamingResponse(event_stream(), media_type="text/event-stream")
+            else:
+                result = run_graph(
+                    user_id=user_id,
+                    role=role,
+                    query=req.query,
+                    session_id=req.session_id,
+                    model_preference=req.model_preference,
+                )
+                return ChatResponse(
+                    response=result["response"],
+                    trace_id=result["trace_id"],
+                    approval_required=result["approval_required"],
+                )
         except Exception as exc:
             import traceback
             import logging
@@ -267,11 +315,6 @@ def create_app() -> FastAPI:
                 trace_id="trace_error",
                 approval_required=False,
             )
-        return ChatResponse(
-            response=result["response"],
-            trace_id=result["trace_id"],
-            approval_required=result["approval_required"],
-        )
 
     @app.post("/auth/login", response_model=AuthResponse)
     def login(req: LoginRequest) -> AuthResponse:

@@ -8,7 +8,7 @@ from src.agents.registry import AGENT_REGISTRY
 from src.core.memory import MemoryManager
 from src.core.date_parser import parse_dates
 from src.core.rbac import check_access, INTENT_GENERAL
-from src.core.intent_classifier import classify_intent, is_question
+from src.core.intent_classifier import classify_intent, classify_domain, is_question
 from src.core.model_selector import resolve_model
 from src.core.router import route_agent
 
@@ -28,26 +28,48 @@ class GraphState(TypedDict, total=False):
     response: str
     approval_required: bool
     trace_id: str
+    workflow_state: str | None
+    active_entities: dict[str, str]
 
 
 def _preprocess(state: GraphState) -> GraphState:
     raw_query = state.get("query", "")
-    query = _resolve_follow_up_query(state.get("session_id", ""), raw_query)
+    session_id = state.get("session_id", "")
+    
+    session_state = memory_manager.get_state(session_id)
+    state["workflow_state"] = session_state.get("workflow_state")
+    state["active_entities"] = session_state.get("active_entities", {})
+    
+    history = memory_manager.get_context(session_id, limit=1)
+    if history:
+        last_response = history[0].get("response", "").lower()
+        if "leave start and end dates" in last_response or "start and end dates before i can submit" in last_response:
+            state["workflow_state"] = "awaiting_leave_dates"
+        elif "issue type first" in last_response or "describe the issue a bit more" in last_response:
+            state["workflow_state"] = "awaiting_ticket_issue"
+        elif "business justification" in last_response or "create an asset request for this?" in last_response:
+            state["workflow_state"] = "awaiting_asset_type"
+            
+        memory_manager.update_state(session_id, {"workflow_state": state.get("workflow_state")})
+        
+    query = _resolve_follow_up_query(session_id, raw_query)
+    
+    if not is_question(query):
+        if state.get("workflow_state") == "awaiting_leave_dates" and "leave" not in query.lower():
+            query = f"apply leave {query}"
+        elif state.get("workflow_state") == "awaiting_ticket_issue" and not _contains_any(query.lower(), ["ticket", "issue"]):
+            query = f"raise ticket {query}"
+        elif state.get("workflow_state") == "awaiting_asset_type" and not _contains_any(query.lower(), ["asset", "request"]):
+            query = f"request asset {query}"
+
     state["query"] = query
     query = _normalize_intent_query(query)
     state["intent_type"] = classify_intent(query)
-    if _contains_any(query, ["leave", "policy", "maternity", "paternity", "hr"]):
-        intent = "hr"
-    elif _contains_any(query, ["ticket", "tickets", "vpn", "laptop", "it", "asset", "assets", "inventory", "monitor", "keyboard", "mouse", "software", "printer", "network", "outlook"]):
-        intent = "it"
-    elif _contains_any(query, ["payslip", "reimbursement", "expense", "claim", "receipt", "receipts", "tax", "finance"]):
-        intent = "finance"
-    else:
-        intent = INTENT_GENERAL
+    intent = classify_domain(query)
     state["intent"] = intent
     state["model"] = resolve_model(state.get("query", ""), intent, state.get("model_preference"))
     import logging
-    logging.info(f"[INTENT DETECTION] Intent: {intent}, Type: {state['intent_type']}")
+    logging.info(f"[INTENT DETECTION] Intent: {intent}, Type: {state['intent_type']}, WorkflowState: {state.get('workflow_state')}")
     return state
 
 
@@ -187,6 +209,28 @@ def _agent(state: GraphState) -> GraphState:
 
 
 def _memory(state: GraphState) -> GraphState:
+    response = state.get("response", "").lower()
+    active_entities = state.get("active_entities", {})
+    
+    import re
+    if "ticket" in response:
+        match = re.search(r"ticket\s*(\d+)", response)
+        if match:
+            active_entities["ticket"] = match.group(1)
+    if "leave request" in response:
+        match = re.search(r"leave request\s*(\d+)", response)
+        if match:
+            active_entities["leave_request"] = match.group(1)
+    if "asset request" in response:
+        match = re.search(r"asset request\s*(\d+)", response)
+        if match:
+            active_entities["asset_request"] = match.group(1)
+            
+    memory_manager.update_state(state.get("session_id", ""), {"active_entities": active_entities})
+
+    if any(keyword in response for keyword in ["submitted", "created", "assigned", "resolved", "canceled"]):
+        memory_manager.update_state(state.get("session_id", ""), {"workflow_state": None})
+        
     memory_manager.add_message(
         state["session_id"],
         {
@@ -199,6 +243,10 @@ def _memory(state: GraphState) -> GraphState:
     )
     memory_manager.save_long_term(state["user_id"], state["session_id"], state["query"])
     return state
+
+def finalize_streaming_memory(state: GraphState, final_response: str) -> None:
+    state["response"] = final_response
+    _memory(state)
 
 
 def _last_routed_agent(session_id: str) -> str | None:
@@ -246,7 +294,7 @@ def _synthesize(state: GraphState) -> GraphState:
     logging.info(f"[BACKEND RESULT] {state.get('response', '')}")
     if state.get("response") == "Access denied for this request.":
         return state
-    final = generate_final_response(state.get("query", ""), state.get("response", ""), state.get("session_id", ""))
+    final = generate_final_response(state.get("query", ""), state.get("response", ""), state.get("session_id", ""), state)
     state["response"] = final
     return state
 
@@ -271,8 +319,33 @@ def build_graph() -> StateGraph:
     return graph.compile()
 
 
-def run_graph(user_id: str, role: str, query: str, session_id: str, model_preference: str | None = None) -> GraphState:
-    graph = build_graph()
+def build_streaming_graph() -> StateGraph:
+    graph = StateGraph(GraphState)
+    graph.add_node("preprocess", _preprocess)
+    graph.add_node("rbac", _rbac)
+    graph.add_node("route", _route)
+    graph.add_node("agent", _agent)
+
+    graph.set_entry_point("preprocess")
+    graph.add_edge("preprocess", "rbac")
+    
+    def _after_rbac_stream(state: GraphState) -> str:
+        if state.get("response") == "Access denied for this request.":
+            return "end"
+        return "route"
+        
+    graph.add_conditional_edges("rbac", _after_rbac_stream, {"end": END, "route": "route"})
+    graph.add_edge("route", "agent")
+    graph.add_edge("agent", END)
+
+    return graph.compile()
+
+
+def run_graph(user_id: str, role: str, query: str, session_id: str, model_preference: str | None = None, skip_synthesis: bool = False) -> GraphState:
+    if skip_synthesis:
+        graph = build_streaming_graph()
+    else:
+        graph = build_graph()
     trace_id = f"trace_{uuid4().hex[:8]}"
     initial_state: GraphState = {
         "user_id": user_id,

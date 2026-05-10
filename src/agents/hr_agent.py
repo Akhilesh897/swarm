@@ -130,11 +130,6 @@ class HRAgent(BaseAgent):
             status = sql.get_approval_status("leave", request_id)
             return AgentResult(response=f"Approval status for {request_id}: {status}.")
 
-        # If user clearly asks for leave but omits dates, ask for dates instead of generic fallback.
-        if _is_leave_signal_query(query):
-            return AgentResult(
-                response="I can help with that. Please share the leave start and end dates (YYYY-MM-DD), and I will submit the request."
-            )
 
         return AgentResult(response="HR request received. Provide more details for policy or leave help.")
 

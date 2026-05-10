@@ -5,71 +5,109 @@ from src.core.memory import MemoryManager
 
 memory_manager = MemoryManager()
 
-SYSTEM_PROMPT = """You are an internal enterprise AI assistant.
-Your goal is to provide conversational, natural, and helpful responses to employees.
-You have access to backend systems for HR, IT, and Finance.
+import os
+import logging
+from openai import OpenAI
+from src.core.memory import MemoryManager
 
-RULES:
-1. You will be provided with either RETRIEVED CONTEXT or a BACKEND ACTION RESULT. Use this to answer the user's query.
-2. NEVER expose raw database IDs, boolean flags, or JSON directly. Humanize them.
-3. If a request is rejected or overlaps, explain it gently and clearly.
-4. DO NOT use markdown bullet dumps unless explicitly asked for a list. Keep it conversational.
-5. Do not hallucinate policies or actions. ONLY rely on the provided context/result.
-6. If the backend result says "No relevant information found", politely inform the user.
-7. Maintain continuity with the RECENT CONVERSATION HISTORY.
+memory_manager = MemoryManager()
 
-Remember: Be conversational, helpful, and concise."""
+def _build_dynamic_prompt(state: dict, recent_context: list, backend_result: str, query: str) -> str:
+    role = state.get("role", "employee")
+    workflow_state = state.get("workflow_state", "None")
+    active_entities = state.get("active_entities", {})
+    
+    prompt = "SYSTEM PROMPT:\n"
+    prompt += "You are an internal enterprise AI copilot.\n\n"
+    
+    # 1. ROLE-AWARE REASONING
+    prompt += f"ROLE CONTEXT: The user is an '{role}'.\n"
+    if role == "it_lead" or role == "it":
+        prompt += "- You have full IT access. You can view, assign, and resolve any tickets.\n"
+    elif role == "hr" or role == "finance":
+        prompt += "- You have department-specific access. You process approvals and view department requests.\n"
+    else:
+        prompt += "- You are a standard employee. You can only view and manage your OWN requests and tickets.\n"
+    
+    # 2. CONVERSATION STATE & ENTITIES
+    prompt += f"\nWORKFLOW STATE: {workflow_state}\n"
+    if active_entities:
+        prompt += "ACTIVE ENTITIES:\n"
+        for k, v in active_entities.items():
+            prompt += f"- {k}: {v}\n"
+            
+    # 3. RECENT MEMORY
+    prompt += "\nRECENT CONVERSATION HISTORY:\n"
+    if recent_context:
+        for msg in recent_context:
+            prompt += f"User: {msg.get('query')}\nAssistant: {msg.get('response')}\n"
+    else:
+        prompt += "No recent history.\n"
+        
+    # 4. TOOL OUTPUTS & CONTEXT
+    prompt += f"\nLATEST USER MESSAGE:\n{query}\n\n"
+    prompt += "BACKEND/TOOL OUTPUT:\n"
+    prompt += f"{backend_result}\n\n"
+    
+    # 5. SELF-CORRECTION & RULES
+    prompt += "RULES & REFLECTION:\n"
+    prompt += "1. TOOL-FIRST REASONING: Prioritize the provided backend output. Do NOT say 'I couldn't find information' unless the tool returned empty/failed. If the tool returned data, synthesize it conversationally.\n"
+    prompt += "2. CONTINUITY: Resolve pronouns (like 'them', 'it') using the conversation history or active entities.\n"
+    prompt += "3. HUMANIZATION: NEVER expose raw DB IDs or JSON. Present information clearly and naturally.\n"
+    prompt += "4. STRICT FACTUALITY: NEVER claim that a request, ticket, or action has been completed, created, submitted, or assigned UNLESS the BACKEND OUTPUT explicitly states that it was created/submitted. If the backend output is a clarifying question, you MUST ask the user that question and NOT pretend the action was completed.\n"
+    prompt += "5. SELF-CORRECTION: Before finalizing, ask yourself: Did I answer correctly? Am I unnecessarily asking for information the user already provided? Am I hallucinating an action that the backend didn't confirm?\n"
+    prompt += "6. RESPONSE QUALITY: Be operational, concise, and enterprise-grade. Avoid repetitive apologies.\n\n"
+    prompt += "Synthesize the final response based ONLY on the context and rules above."
+    
+    return prompt
 
-def generate_final_response(query: str, backend_result: str, session_id: str) -> str:
-    if _should_return_backend_result(query, backend_result):
-        return backend_result
-
+def generate_final_response(query: str, backend_result: str, session_id: str, state: dict = None, stream: bool = False):
+    state = state or {}
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
+        if stream:
+            def fallback_gen():
+                yield backend_result
+            return fallback_gen()
         return backend_result # Fallback if no key
 
-    recent_context = memory_manager.get_context(session_id, limit=10)
+    recent_context = memory_manager.get_context(session_id, limit=6)
     
-    memory_str = ""
-    if recent_context:
-        memory_str = "RECENT CONVERSATION HISTORY:\n"
-        for msg in recent_context:
-            memory_str += f"User: {msg['query']}\nAssistant: {msg['response']}\n"
-    
-    prompt = f"{memory_str}\n"
-    
-    prompt += f"USER QUERY:\n{query}\n\n"
-    if "[1]" in backend_result or "source:" in backend_result:
-        prompt += f"RETRIEVED CONTEXT:\n{backend_result}\n\n"
-        prompt += "Please provide a natural, conversational response based ONLY on the context above."
-    else:
-        prompt += f"RESULT OF EXECUTING BACKEND ACTION FOR THIS QUERY:\n{backend_result}\n\n"
-        prompt += "Please provide a natural, conversational response based ONLY on the result above. The action has ALREADY been performed, explain the result to the user gently."
+    dynamic_prompt = _build_dynamic_prompt(state, recent_context, backend_result, query)
 
     logging.info(f"[STM INJECTION] Included {len(recent_context)} previous turns.")
-    logging.info(f"[PROMPT ASSEMBLY] Generating final response.")
+    logging.info(f"[PROMPT ASSEMBLY] Generating final response dynamically.")
 
     try:
-        logging.info(f"[GROQ REQUEST]\nSYSTEM: {SYSTEM_PROMPT}\nUSER: {prompt}")
+        logging.info(f"[GROQ REQUEST]\n{dynamic_prompt}")
         
         client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=api_key)
         completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": dynamic_prompt}
             ],
             temperature=0.3,
-            max_tokens=500
+            max_tokens=600,
+            stream=stream
         )
-        final_response = completion.choices[0].message.content
-        logging.info(f"[GROQ RESPONSE]\n{final_response}")
-        logging.info(f"[FINAL LLM GENERATION] {final_response[:100]}...")
-        return final_response
+        if stream:
+            def stream_gen():
+                for chunk in completion:
+                    if chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+            return stream_gen()
+        else:
+            final_response = completion.choices[0].message.content
+            logging.info(f"[GROQ RESPONSE]\n{final_response}")
+            return final_response
     except Exception as e:
         logging.error(f"Groq API error: {e}")
+        if stream:
+            def err_gen():
+                yield backend_result
+            return err_gen()
         return backend_result
-
 
 def _should_return_backend_result(query: str, backend_result: str) -> bool:
     normalized_query = query.lower().strip()

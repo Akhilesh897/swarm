@@ -268,6 +268,7 @@ async function sendMessage() {
         query: text,
         session_id: sessionIdInput.value.trim(),
         model_preference: modelSelect.value,
+        stream: true,
       }),
     });
 
@@ -279,26 +280,70 @@ async function sendMessage() {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    const data = await response.json();
     thinkingBubble.remove();
-    const meta = `Trace: ${data.trace_id} | Approval: ${data.approval_required ? "required" : "none"}`;
-    const latencyMs = Math.round(performance.now() - startedAt);
-    addMessage(data.response, "agent", `${meta} | ${latencyMs} ms`, [
-      {
-        label: "Copy answer",
-        kind: "primary",
-        onClick: (event) => copyText(data.response, event.currentTarget),
-      },
-      {
-        label: "Reuse prompt",
-        kind: "secondary",
-        onClick: () => {
-          messageInput.value = text;
-          updateDraftSignal();
-          messageInput.focus();
-        },
-      },
-    ]);
+    const resultBubble = createBubble("", "agent", "Typing...");
+    chatLog.appendChild(resultBubble);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    
+    const contentDiv = resultBubble.querySelector(".bubble-content");
+    const metaDiv = resultBubble.querySelector(".chat-meta");
+    let accumulatedText = "";
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n\n");
+      buffer = lines.pop();
+      
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const jsonStr = line.substring(6);
+          if (jsonStr === "[DONE]") continue;
+          try {
+            const data = JSON.parse(jsonStr);
+            if (data.chunk) {
+              accumulatedText += data.chunk;
+              contentDiv.innerHTML = typeof marked !== "undefined" ? marked.parse(accumulatedText) : accumulatedText;
+              chatLog.scrollTop = chatLog.scrollHeight;
+            }
+            if (data.done) {
+              const latencyMs = Math.round(performance.now() - startedAt);
+              metaDiv.textContent = `Trace: ${data.trace_id} | Approval: ${data.approval_required ? "required" : "none"} | ${latencyMs} ms`;
+              
+              const actionsEl = document.createElement("div");
+              actionsEl.className = "bubble-actions";
+              
+              const btn1 = document.createElement("button");
+              btn1.className = "bubble-action primary";
+              btn1.textContent = "Copy answer";
+              btn1.onclick = (e) => copyText(accumulatedText, e.currentTarget);
+              actionsEl.appendChild(btn1);
+              
+              const btn2 = document.createElement("button");
+              btn2.className = "bubble-action secondary";
+              btn2.textContent = "Reuse prompt";
+              btn2.onclick = () => {
+                 messageInput.value = text;
+                 updateDraftSignal();
+                 messageInput.focus();
+              };
+              actionsEl.appendChild(btn2);
+              
+              resultBubble.appendChild(actionsEl);
+              chatLog.scrollTop = chatLog.scrollHeight;
+            }
+          } catch (e) {
+             console.error("Parse error", e);
+          }
+        }
+      }
+    }
   } catch (error) {
     thinkingBubble.remove();
     addMessage("Something went wrong. Please try again.", "agent", "Error");
@@ -445,6 +490,11 @@ function renderAssets(assets, role = "") {
 }
 
 function renderQuickApprovals(pending, role) {
+  const h2 = assetsContainer.previousElementSibling;
+  if (h2 && h2.tagName === "H2") {
+    h2.textContent = "Pending Approvals";
+  }
+
   const leave = pending.leave || [];
   const asset = pending.asset || [];
   const cards = [];

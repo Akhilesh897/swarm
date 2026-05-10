@@ -36,6 +36,34 @@ class ITAgent(BaseAgent):
             status = sql.assign_ticket(ticket_id, engineer)
             return AgentResult(response=f"Ticket {ticket_id} assignment status: {status}.")
 
+        if intent_type == "status":
+            if any(k in query for k in ["asset", "laptop", "monitor", "keyboard", "mouse", "printer"]):
+                assets = sql.list_assets(user_id, role)
+                if not assets:
+                    return AgentResult(response="You have no asset requests.")
+                
+                asset_type = _infer_asset_type(query)
+                filtered = [a for a in assets if asset_type in a["asset_type"]] if asset_type != "general" else assets
+                if not filtered:
+                    filtered = assets
+                    
+                lines = [f"- Request {row['id']}: {row['asset_type']} (Status: {row['status']}, Stage: {row.get('approval_stage', 'N/A')})" for row in filtered]
+                return AgentResult(response="Asset Requests:\n" + "\n".join(lines))
+            
+            tickets = sql.list_tickets(user_id, role)
+            if not tickets:
+                return AgentResult(response="You have no IT tickets.")
+            
+            ticket_id = _extract_id(query)
+            if ticket_id:
+                filtered = [t for t in tickets if t["id"] == ticket_id]
+                if not filtered:
+                    return AgentResult(response=f"Ticket {ticket_id} not found or you do not have access.")
+                tickets = filtered
+
+            lines = [f"- Ticket {row['id']}: {row['issue_type']} ({row['priority']}, {row['status']}) assigned to {row['assigned_engineer'] or 'unassigned'}" for row in tickets[:5]]
+            return AgentResult(response="Tickets:\n" + "\n".join(lines))
+
         if any(k in query for k in ["resolve ticket", "close ticket", "resolved"]):
             if role != IT_ROLE:
                 return AgentResult(response="Access denied. Only IT can resolve tickets. You can still create tickets and track your own status.")

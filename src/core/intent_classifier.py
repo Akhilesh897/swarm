@@ -1,137 +1,74 @@
 import re
+import json
+from src.core.model_selector import call_model
 
+def _analyze_with_llm(query: str) -> dict:
+    prompt = f"""Analyze the following user query and classify it.
+Query: "{query}"
+
+You must respond in valid JSON format with exactly these three keys:
+1. "is_question": true if the user is asking for information, clarification, guidance, or policies (e.g., "what is the procedure", "which leave should I put", "how do I..."). false if they are issuing a direct command or action (e.g., "apply for leave", "create a ticket").
+2. "intent_type": strictly ONE of ["policy", "action", "status", "other"].
+   - "policy": Asking about rules, procedures, onboarding, handbooks, guidelines (e.g., "onboarding procedures", "which leave applies for biriyani").
+   - "action": Requesting to DO something and modifying state (e.g., "apply for leave", "raise ticket", "cancel request").
+   - "status": Checking existing balance, history, or ticket status.
+   - "other": Greetings or unrecognized.
+3. "domain": strictly ONE of ["hr", "it", "finance", "general"].
+   - "hr": Leaves, HR policies, onboarding, employee benefits.
+   - "it": Tickets, laptops, VPN, assets, software.
+   - "finance": Expenses, reimbursements, payslips, taxes.
+   - "general": Greetings or unclear.
+
+JSON Output:"""
+    
+    response = call_model("grok", prompt, timeout=5.0)
+    if not response:
+        return {"is_question": "?" in query, "intent_type": "other", "domain": "general"}
+        
+    try:
+        # Extract JSON from potential markdown block
+        json_str = response
+        if "```json" in response:
+            json_str = response.split("```json")[1].split("```")[0]
+        elif "```" in response:
+            json_str = response.split("```")[1].split("```")[0]
+            
+        data = json.loads(json_str.strip())
+        return {
+            "is_question": bool(data.get("is_question")),
+            "intent_type": str(data.get("intent_type", "other")).lower(),
+            "domain": str(data.get("domain", "general")).lower()
+        }
+    except Exception:
+        # Fallback to simple heuristics if parsing fails
+        is_q = "?" in query or any(query.lower().strip().startswith(w) for w in ["what", "how", "when", "where", "who", "why", "which"])
+        return {"is_question": is_q, "intent_type": "other", "domain": "general"}
+
+def is_question(query: str) -> bool:
+    # Use cached result if possible to avoid double LLM calls in the same flow, 
+    # but for simplicity we will just rely on the LLM.
+    # Actually, to avoid 2 calls, workflow.py calls classify_intent then is_question.
+    # Let's just do a fast heuristic here, OR wait, _should_use_rag uses is_question.
+    pass
+
+# We will cache the analysis per query to avoid hitting the LLM twice for the same query
+_cache = {}
+
+def classify_intent(query: str) -> str:
+    text = query.lower().strip()
+    if text not in _cache:
+        _cache[text] = _analyze_with_llm(query)
+    return _cache[text]["intent_type"]
+
+def classify_domain(query: str) -> str:
+    text = query.lower().strip()
+    if text not in _cache:
+        _cache[text] = _analyze_with_llm(query)
+    return _cache[text]["domain"]
 
 def is_question(query: str) -> bool:
     text = query.lower().strip()
-    if "?" in text:
-        if _has_action_terms(text):
-            return False
-        return True
-    question_starters = (
-        "what",
-        "how",
-        "when",
-        "where",
-        "who",
-        "why",
-        "which",
-        "can",
-        "could",
-        "should",
-        "may",
-        "do",
-        "does",
-        "is",
-        "are",
-        "am",
-        "will",
-        "would",
-        "tell me",
-        "explain",
-        "clarify",
-    )
-    if text.startswith(question_starters):
-        return not _has_action_terms(text)
-    return False
+    if text not in _cache:
+        _cache[text] = _analyze_with_llm(query)
+    return _cache[text]["is_question"]
 
-
-def _has_action_terms(text: str) -> bool:
-    action_patterns = [
-        r"\bapply\b",
-        r"\brequest\b",
-        r"\bcreate\b",
-        r"\bsubmit\b",
-        r"\braise\b",
-        r"\bassign\b",
-        r"\bresolve\b",
-        r"\bapprove\b",
-        r"\breject\b",
-        r"\bbook\b",
-        r"\bschedule\b",
-        r"\border\b",
-        r"\bissue\b",
-        r"\blog\b",
-        r"\bcancel\b",
-        r"\bwithdraw\b",
-        r"\bresubmit\b",
-    ]
-    return any(re.search(pattern, text) for pattern in action_patterns)
-
-def classify_intent(query: str) -> str:
-    """
-    Returns one of:
-    - 'policy'
-    - 'action'
-    - 'status'
-    - 'other'
-    """
-    text = query.lower().strip()
-
-    policy_patterns = [
-        r"\bpolicy\b",
-        r"\brules\b",
-        r"\beligibility\b",
-        r"\bentitled\b",
-        r"\bentitlement\b",
-        r"\ballowed\b",
-        r"\bthreshold\b",
-        r"\blimits?\b",
-        r"\bcoverage\b",
-        r"\bamount\b",
-        r"\bclaim(ed|s)?\b",
-        r"\breceipts?\b",
-        r"\bdeadline\b",
-        r"\bwhen\b.*\bsubmit\b",
-        r"\bsubmit\b.*\breceipts?\b",
-        r"\breimbursement policy\b",
-        r"\bapprov(al|als) process\b",
-        r"\bguidelines\b",
-        r"\bhandbook\b",
-        r"\bcompliance\b",
-    ]
-    status_patterns = [
-        r"\bstatus\b",
-        r"\bcheck\b",
-        r"\btrack\b",
-        r"\bprogress\b",
-        r"\bsummary\b",
-        r"\bhistory\b",
-        r"\bbalance\b",
-        r"\bremaining\b",
-        r"\bquota\b",
-        r"\bleft\b",
-        r"\benough\b.*\bleave\b",
-        r"\bleave\b.*\benough\b",
-        r"\bhow many\b.*\bleave\b",
-        r"\bpending\b",
-        r"\bapproval\s*status\b",
-        r"\bticket\s*(id|number)\b",
-        r"\brequest\s*(id|number)\b",
-    ]
-    action_patterns = [
-        r"\bapply\b",
-        r"\brequest\b",
-        r"\bcreate\b",
-        r"\bsubmit\b",
-        r"\braise\b",
-        r"\bassign\b",
-        r"\bresolve\b",
-        r"\bapprove\b",
-        r"\breject\b",
-        r"\bbook\b",
-        r"\bschedule\b",
-        r"\border\b",
-        r"\bissue\b",
-        r"\blog\b",
-        r"\bcancel\b",
-        r"\bwithdraw\b",
-        r"\bresubmit\b",
-    ]
-
-    if any(re.search(pattern, text) for pattern in policy_patterns):
-        return "policy"
-    if any(re.search(pattern, text) for pattern in status_patterns):
-        return "status"
-    if any(re.search(pattern, text) for pattern in action_patterns):
-        return "action"
-    return "other"

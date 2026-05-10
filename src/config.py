@@ -46,10 +46,19 @@ def get_config() -> AppConfig:
     legacy_gemini_model = os.getenv("Gemini_MODEL", "")
     grok_api_key = os.getenv("GROK_API_KEY", "")
     gemini_api_key = os.getenv("GEMINI_API_KEY", "")
-    if not grok_api_key and legacy_grok_model.startswith(("gsk_", "xai-")):
-        grok_api_key = legacy_grok_model
-    if not gemini_api_key and legacy_gemini_model.startswith("AIza"):
-        gemini_api_key = legacy_gemini_model
+    groq_api_key = os.getenv("GROQ_API_KEY", "")
+    
+    if not grok_api_key:
+        if legacy_grok_model.startswith(("gsk_", "xai-")):
+            grok_api_key = legacy_grok_model
+        elif groq_api_key:
+            grok_api_key = groq_api_key
+            
+    if not gemini_api_key:
+        if legacy_gemini_model.startswith("AIza"):
+            gemini_api_key = legacy_gemini_model
+        elif groq_api_key:
+            gemini_api_key = groq_api_key
 
     admin_email_roles_raw = os.getenv(
         "ADMIN_EMAIL_ROLES",
