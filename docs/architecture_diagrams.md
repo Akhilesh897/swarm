@@ -115,20 +115,20 @@ Visualizes the parallel pipelines for ingestion (run via background thread on st
 
 ```mermaid
 graph TD
-    subgraph Ingestion Pipeline (src/tools/ingest.py)
-        RawDocs[HR/IT Policy PDFs & MDs] --> Chunker[Chunk Text & Overlap]
-        Chunker --> Metadata[Infer Section/Topic Metadata]
-        Metadata --> VStore[Vector Store\nsrc/tools/vector_store.py]
-        VStore -->|SentenceTransformers| Embeddings[(Chroma/Disk DB)]
+    subgraph Ingestion ["Ingestion Pipeline (src/tools/ingest.py)"]
+        RawDocs["HR/IT Policy PDFs & MDs"] --> Chunker["Chunk Text & Overlap"]
+        Chunker --> Metadata["Infer Section/Topic Metadata"]
+        Metadata --> VStore["Vector Store\nsrc/tools/vector_store.py"]
+        VStore -->|SentenceTransformers| Embeddings[("Chroma/Disk DB")]
     end
     
-    subgraph Retrieval Pipeline (src/agents/rag_agent.py)
-        Query[User Query] --> Intent[Intent Classifier\nIdentify Domain]
-        Intent --> Retriever[similarity_search\nvector_store.py]
+    subgraph Retrieval ["Retrieval Pipeline (src/agents/rag_agent.py)"]
+        Query["User Query"] --> Intent["Intent Classifier\nIdentify Domain"]
+        Intent --> Retriever["similarity_search\nvector_store.py"]
         Retriever -->|Retrieve Top K| Embeddings
-        Embeddings -->|Context Chunks| PromptGen[Prompt Injector\nrag_agent.py]
-        PromptGen --> Generator[generator.py]
-        Generator --> Final[Final Humanized Response]
+        Embeddings -->|Context Chunks| PromptGen["Prompt Injector\nrag_agent.py"]
+        PromptGen --> Generator["generator.py"]
+        Generator --> Final["Final Humanized Response"]
     end
 ```
 
@@ -168,17 +168,17 @@ Maps out the tight coupling between core service logic (`auth.py`, `sql.py`) and
 
 ```mermaid
 graph TD
-    subgraph Models & Security
-        Auth[src/core/auth.py] --> DB[(app.db SQLite)]
-        Config[src/config.py]
+    subgraph Models ["Models & Security"]
+        Auth["src/core/auth.py"] --> DB[("app.db SQLite")]
+        Config["src/config.py"]
     end
 
-    subgraph Data Access Layer (src/tools/sql.py)
-        Users[User CRUD & Identity]
-        Leaves[Leave Transactions]
-        Tickets[Ticket Lifecycle]
-        Assets[Asset Inventory]
-        Approvals[Approval Chains]
+    subgraph DataAccess ["Data Access Layer (src/tools/sql.py)"]
+        Users["User CRUD & Identity"]
+        Leaves["Leave Transactions"]
+        Tickets["Ticket Lifecycle"]
+        Assets["Asset Inventory"]
+        Approvals["Approval Chains"]
     end
 
     Users --> DB
@@ -188,8 +188,8 @@ graph TD
     Approvals --> DB
 
     subgraph Agents
-        HR[hr_agent.py] --> Leaves
-        IT[it_agent.py] --> Tickets
+        HR["hr_agent.py"] --> Leaves
+        IT["it_agent.py"] --> Tickets
         IT --> Assets
         IT -.-> Approvals
         HR -.-> Approvals
@@ -201,16 +201,16 @@ Illustrates the exposed tool architecture (via `fastmcp_tools.py`) enabling exte
 
 ```mermaid
 graph LR
-    subgraph FastAPI Core
-        Router[tools_router\nsrc/tools/fastmcp_tools.py]
+    subgraph FastAPI ["FastAPI Core"]
+        Router["tools_router\nsrc/tools/fastmcp_tools.py"]
     end
     
-    subgraph MCP Endpoints
-        GetTickets[get_tickets_mcp]
-        CreateTicket[create_ticket_mcp]
-        LeaveBalance[get_leave_balance_mcp]
-        ApplyLeave[apply_leave_mcp]
-        SearchRAG[search_kb_mcp]
+    subgraph MCP ["MCP Endpoints"]
+        GetTickets["get_tickets_mcp"]
+        CreateTicket["create_ticket_mcp"]
+        LeaveBalance["get_leave_balance_mcp"]
+        ApplyLeave["apply_leave_mcp"]
+        SearchRAG["search_kb_mcp"]
     end
     
     Router --> GetTickets
@@ -219,11 +219,11 @@ graph LR
     Router --> ApplyLeave
     Router --> SearchRAG
     
-    GetTickets --> SQL[src/tools/sql.py]
+    GetTickets --> SQL["src/tools/sql.py"]
     CreateTicket --> SQL
     LeaveBalance --> SQL
     ApplyLeave --> SQL
-    SearchRAG --> VStore[src/tools/vector_store.py]
+    SearchRAG --> VStore["src/tools/vector_store.py"]
 ```
 
 ---
